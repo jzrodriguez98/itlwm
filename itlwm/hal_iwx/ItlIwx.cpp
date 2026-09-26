@@ -148,6 +148,11 @@ bool ItlIwx::attach(IOPCIDevice *device)
         releaseAll();
         return false;
     }
+    if (com.sc_device_family >= IWX_DEVICE_FAMILY_AX210 && !applevtdTxAllocate()) {
+        detach(device);
+        releaseAll();
+        return false;
+    }
     return true;
 }
 
@@ -193,6 +198,7 @@ releaseAll()
 
 void ItlIwx::free()
 {
+    applevtdTxFree();
     XYLog("%s\n", __FUNCTION__);
     super::free();
 }
@@ -2242,7 +2248,11 @@ iwx_poll_bit(struct iwx_softc *sc, int reg, uint32_t bits, uint32_t mask,
              int timo)
 {
     for (;;) {
-        if ((IWX_READ(sc, reg) & mask) == (bits & mask)) {
+        uint32_t val = IWX_READ(sc, reg);
+        if (val == 0xFFFFFFFF) {
+            return 0;
+        }
+        if ((val & mask) == (bits & mask)) {
             return 1;
         }
         if (timo < 10) {
@@ -2324,28 +2334,169 @@ iwx_clear_bits_prph(struct iwx_softc *sc, uint32_t reg, uint32_t bits)
     iwx_set_bits_mask_prph(sc, reg, 0, ~bits);
 }
 
+static bool allocDmaMemory2(struct iwx_dma_info *dma, size_t size, int alignment);
+
+/*
+ * Tahoe AppleVTD / AX210 packet backing.
+ * The validated AirportItlwm-Tahoe architecture keeps device DMA in prepared
+ * IODMACommand-backed memory and uses the generated IOVM address.  The mbuf
+ * itself is retained only by the network stack and is never handed to AX210.
+ */
+bool ItlIwx::applevtdTxAllocate()
+{
+    if (fAppleVTDTxReady) return true;
+    if (!fAppleVTDTxLock) {
+        fAppleVTDTxLock = IOLockAlloc();
+        if (!fAppleVTDTxLock) return false;
+    }
+    for (unsigned i = 0; i < kAppleVTDTxCount; ++i) {
+        if (!allocDmaMemory2(&fAppleVTDTx[i].dma, kAppleVTDTxSize, PAGE_SIZE)) {
+            applevtdTxFree();
+            return false;
+        }
+        fAppleVTDTx[i].owner = NULL;
+        fAppleVTDTx[i].state = AppleVTDTxFree;
+    }
+    fAppleVTDTxNext = 0;
+    fAppleVTDTxReady = true;
+    return true;
+}
+
+int ItlIwx::applevtdTxPrepare(struct iwx_tx_data *data, mbuf_t packet,
+                              IOPhysicalSegment *segments, unsigned maxSegments)
+{
+    if (!fAppleVTDTxReady || !data || !packet || !segments ||
+        mbuf_pkthdr_len(packet) == 0 || mbuf_pkthdr_len(packet) > kAppleVTDTxSize ||
+        data->applevtd_token != 0)
+        return 0;
+
+    unsigned token = 0;
+    if (fAppleVTDTxLock) IOLockLock(fAppleVTDTxLock);
+    for (unsigned n = 0; n < kAppleVTDTxCount; ++n) {
+        unsigned i = (fAppleVTDTxNext + n) % kAppleVTDTxCount;
+        if (fAppleVTDTx[i].state == AppleVTDTxFree) {
+            fAppleVTDTx[i].state = AppleVTDTxCopying;
+            token = i + 1;
+            fAppleVTDTxNext = (i + 1) % kAppleVTDTxCount;
+            break;
+        }
+    }
+    if (fAppleVTDTxLock) IOLockUnlock(fAppleVTDTxLock);
+
+    if (!token) return 0;
+    AppleVTDTxBacking &b = fAppleVTDTx[token - 1];
+    b.owner = data;
+    data->applevtd_token = (uint16_t)token;
+    const size_t length = mbuf_pkthdr_len(packet);
+    if (mbuf_copydata(packet, 0, length, b.dma.vaddr) != 0 ||
+        b.dma.cmd->synchronize(kIODirectionOut) != kIOReturnSuccess) {
+        if (fAppleVTDTxLock) IOLockLock(fAppleVTDTxLock);
+        data->applevtd_token = 0; b.owner = NULL; b.state = AppleVTDTxFree;
+        if (fAppleVTDTxLock) IOLockUnlock(fAppleVTDTxLock);
+        return 0;
+    }
+    unsigned count = 0;
+    for (size_t offset = 0; offset < length && count < maxSegments; ) {
+        uint64_t address = b.dma.paddr + offset;
+        size_t pageLeft = PAGE_SIZE - (address & (PAGE_SIZE - 1));
+        size_t bytes = MIN(length - offset, MIN((size_t)4092, pageLeft));
+        segments[count].location = address;
+        segments[count].length = bytes;
+        ++count; offset += bytes;
+    }
+    if (!count) {
+        if (fAppleVTDTxLock) IOLockLock(fAppleVTDTxLock);
+        data->applevtd_token = 0; b.owner = NULL; b.state = AppleVTDTxFree;
+        if (fAppleVTDTxLock) IOLockUnlock(fAppleVTDTxLock);
+        return 0;
+    }
+
+    if (fAppleVTDTxLock) IOLockLock(fAppleVTDTxLock);
+    b.state = AppleVTDTxInflight;
+    if (fAppleVTDTxLock) IOLockUnlock(fAppleVTDTxLock);
+
+    return (int)count;
+}
+
+void ItlIwx::applevtdTxRetire(struct iwx_tx_data *data, bool normal)
+{
+    if (!data || !data->applevtd_token) return;
+    if (fAppleVTDTxLock) IOLockLock(fAppleVTDTxLock);
+    unsigned token = data->applevtd_token;
+    data->applevtd_token = 0;
+    if (token <= kAppleVTDTxCount && fAppleVTDTx[token - 1].owner == data) {
+        AppleVTDTxBacking &b = fAppleVTDTx[token - 1];
+        if (normal && b.state == AppleVTDTxInflight) {
+            b.owner = NULL; b.state = AppleVTDTxFree;
+        } else {
+            /* Reset does not by itself prove the device stopped DMA. */
+            b.owner = NULL; b.state = AppleVTDTxQuarantined;
+        }
+    }
+    if (fAppleVTDTxLock) IOLockUnlock(fAppleVTDTxLock);
+}
+
+void ItlIwx::applevtdTxResetQuarantine()
+{
+    if (fAppleVTDTxLock) IOLockLock(fAppleVTDTxLock);
+    for (unsigned i = 0; i < kAppleVTDTxCount; ++i) {
+        if (fAppleVTDTx[i].state == AppleVTDTxQuarantined) {
+            fAppleVTDTx[i].owner = NULL;
+            fAppleVTDTx[i].state = AppleVTDTxFree;
+        }
+    }
+    if (fAppleVTDTxLock) IOLockUnlock(fAppleVTDTxLock);
+}
+
+void ItlIwx::applevtdTxFree()
+{
+    if (fAppleVTDTxLock) IOLockLock(fAppleVTDTxLock);
+    for (unsigned i = 0; i < kAppleVTDTxCount; ++i) {
+        if (fAppleVTDTx[i].dma.cmd) {
+            iwx_dma_contig_free(&fAppleVTDTx[i].dma);
+            fAppleVTDTx[i].owner = NULL;
+            fAppleVTDTx[i].state = AppleVTDTxFree;
+        }
+    }
+    fAppleVTDTxReady = false;
+    if (fAppleVTDTxLock) {
+        IOLock *lock = fAppleVTDTxLock;
+        fAppleVTDTxLock = NULL;
+        IOLockUnlock(lock);
+        IOLockFree(lock);
+    }
+}
+
 bool allocDmaMemory2(struct iwx_dma_info *dma, size_t size, int alignment)
 {
     IOBufferMemoryDescriptor *bmd;
-    IODMACommand::Segment64 seg;
+    IODMACommand::Segment64 seg = {};
     UInt64 ofs = 0;
     UInt32 numSegs = 1;
-    
-    bmd = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(kernel_task, kIODirectionInOut | kIOMemoryPhysicallyContiguous | kIOMapInhibitCache, size, DMA_BIT_MASK(64));
-    
+    IOReturn result;
+
+    bmd = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
+        kernel_task,
+        kIODirectionInOut | kIOMemoryPhysicallyContiguous | kIOMapInhibitCache,
+        size,
+        DMA_BIT_MASK(64));
+
     if (bmd == NULL) {
         XYLog("%s alloc DMA memory failed.\n", __FUNCTION__);
         return false;
     }
-    
-    if (bmd->prepare() != kIOReturnSuccess) {
-        XYLog("%s prepare DMA memory failed.\n", __FUNCTION__);
+
+    result = bmd->prepare();
+    if (result != kIOReturnSuccess) {
+        XYLog("%s prepare DMA memory failed: 0x%x.\n", __FUNCTION__, result);
         bmd->release();
         bmd = NULL;
         return false;
     }
-    IODMACommand *cmd = IODMACommand::withSpecification(kIODMACommandOutputHost64, 64, 0, IODMACommand::kMapped, 0, alignment);
-    
+
+    IODMACommand *cmd = IODMACommand::withSpecification(
+        kIODMACommandOutputHost64, 64, 0, IODMACommand::kMapped, 0, alignment);
+
     if (cmd == NULL) {
         XYLog("%s alloc IODMACommand memory failed.\n", __FUNCTION__);
         bmd->complete();
@@ -2353,8 +2504,34 @@ bool allocDmaMemory2(struct iwx_dma_info *dma, size_t size, int alignment)
         return false;
     }
 
-    if (cmd->setMemoryDescriptor(bmd) != kIOReturnSuccess
-        || cmd->gen64IOVMSegments(&ofs, &seg, &numSegs) != kIOReturnSuccess) {
+    result = cmd->setMemoryDescriptor(bmd);
+    if (result == kIOReturnSuccess)
+        result = cmd->gen64IOVMSegments(&ofs, &seg, &numSegs);
+
+    if (result != kIOReturnSuccess ||
+        numSegs != 1 ||
+        ofs != size ||
+        seg.fLength != size ||
+        !alignment ||
+        (seg.fIOVMAddr & (alignment - 1)) ||
+        !bmd->getBytesNoCopy()) {
+        XYLog("%s DMA mapping validation failed: result=0x%x segs=%u ofs=%llu len=%llu addr=0x%llx.\n",
+              __FUNCTION__, result, unsigned(numSegs),
+              (unsigned long long)ofs, (unsigned long long)seg.fLength,
+              (unsigned long long)seg.fIOVMAddr);
+        cmd->clearMemoryDescriptor();
+        cmd->release();
+        bmd->complete();
+        bmd->release();
+        return false;
+    }
+
+    void *bytes = bmd->getBytesNoCopy();
+    memset(bytes, 0, size);
+    result = cmd->synchronize(kIODirectionOut);
+    if (result != kIOReturnSuccess) {
+        XYLog("%s initial DMA synchronize failed: 0x%x.\n", __FUNCTION__, result);
+        cmd->clearMemoryDescriptor();
         cmd->release();
         cmd = NULL;
         bmd->complete();
@@ -2362,12 +2539,12 @@ bool allocDmaMemory2(struct iwx_dma_info *dma, size_t size, int alignment)
         bmd = NULL;
         return false;
     }
+
     dma->paddr = seg.fIOVMAddr;
-    dma->vaddr = bmd->getBytesNoCopy();
+    dma->vaddr = bytes;
     dma->size = size;
     dma->buffer = bmd;
     dma->cmd = cmd;
-    memset(dma->vaddr, 0, dma->size);
     return true;
 }
 
@@ -2461,7 +2638,13 @@ iwx_alloc_rx_ring(struct iwx_softc *sc, struct iwx_rx_ring *ring)
                   DEVNAME(sc));
             goto fail;
         }
-        
+        if (sc->sc_device_family >= IWX_DEVICE_FAMILY_AX210) {
+            err = iwx_dma_contig_alloc(sc->sc_dmat, &data->applevtd_dma, IWX_RBUF_SIZE, PAGE_SIZE);
+            if (err) {
+                XYLog("%s: could not create AppleVTD RX backing\n", DEVNAME(sc));
+                goto fail;
+            }
+        }
         err = iwx_rx_addbuf(sc, IWX_RBUF_SIZE, i);
         if (err)
             goto fail;
@@ -2481,16 +2664,16 @@ iwx_disable_rx_dma(struct iwx_softc *sc)
         if (sc->sc_device_family >= IWX_DEVICE_FAMILY_AX210) {
             iwx_write_umac_prph(sc, IWX_RFH_RXF_DMA_CFG_GEN3, 0);
             for (ntries = 0; ntries < 1000; ntries++) {
-                if (iwx_read_umac_prph(sc, IWX_RFH_GEN_STATUS_GEN3) &
-                    IWX_RXF_DMA_IDLE)
+                uint32_t val = iwx_read_umac_prph(sc, IWX_RFH_GEN_STATUS_GEN3);
+                if (val == 0xFFFFFFFF || (val & IWX_RXF_DMA_IDLE))
                     break;
                 DELAY(10);
             }
         } else {
             iwx_write_prph(sc, IWX_RFH_RXF_DMA_CFG, 0);
             for (ntries = 0; ntries < 1000; ntries++) {
-                if (iwx_read_prph(sc, IWX_RFH_GEN_STATUS) &
-                    IWX_RXF_DMA_IDLE)
+                uint32_t val = iwx_read_prph(sc, IWX_RFH_GEN_STATUS);
+                if (val == 0xFFFFFFFF || (val & IWX_RXF_DMA_IDLE))
                     break;
                 DELAY(10);
             }
@@ -2537,6 +2720,8 @@ iwx_free_rx_ring(struct iwx_softc *sc, struct iwx_rx_ring *ring)
             bus_dmamap_destroy(sc->sc_dmat, data->map);
             data->map = NULL;
         }
+        if (sc->sc_device_family >= IWX_DEVICE_FAMILY_AX210)
+            iwx_dma_contig_free(&data->applevtd_dma);
     }
 }
 
@@ -2640,6 +2825,12 @@ iwx_alloc_tx_ring(struct iwx_softc *sc, struct iwx_tx_ring *ring, int qid)
                   DEVNAME(sc));
             goto fail;
         }
+        if (sc->sc_device_family >= IWX_DEVICE_FAMILY_AX210 && qid == IWX_DQA_CMD_QUEUE) {
+            if (iwx_dma_contig_alloc(sc->sc_dmat, &data->applevtd_cmd_dma, 4096, PAGE_SIZE)) {
+                XYLog("%s: could not create AppleVTD command backing\n", DEVNAME(sc));
+                goto fail;
+            }
+        }
     }
     KASSERT(paddr == ring->cmd_dma.paddr + size, "paddr == ring->cmd_dma.paddr + size");
     return 0;
@@ -2660,10 +2851,15 @@ iwx_reset_tx_ring(struct iwx_softc *sc, struct iwx_tx_ring *ring)
             //            bus_dmamap_sync(sc->sc_dmat, data->map, 0,
             //                data->map->dm_mapsize, BUS_DMASYNC_POSTWRITE);
             //            bus_dmamap_unload(sc->sc_dmat, data->map);
+            if (sc->sc_device_family >= IWX_DEVICE_FAMILY_AX210)
+                applevtdTxRetire(data, false);
             mbuf_freem(data->m);
             data->m = NULL;
         }
     }
+
+    if (sc->sc_device_family >= IWX_DEVICE_FAMILY_AX210)
+        applevtdTxResetQuarantine();
 
     if (ring->qid == IWX_INVALID_QUEUE || !ring->desc) {
         return;
@@ -2698,6 +2894,8 @@ iwx_free_tx_ring(struct iwx_softc *sc, struct iwx_tx_ring *ring)
             //            bus_dmamap_sync(sc->sc_dmat, data->map, 0,
             //                data->map->dm_mapsize, BUS_DMASYNC_POSTWRITE);
             //            bus_dmamap_unload(sc->sc_dmat, data->map);
+            if (sc->sc_device_family >= IWX_DEVICE_FAMILY_AX210)
+                applevtdTxRetire(data, false);
             mbuf_freem(data->m);
             data->m = NULL;
         }
@@ -2705,6 +2903,8 @@ iwx_free_tx_ring(struct iwx_softc *sc, struct iwx_tx_ring *ring)
             bus_dmamap_destroy(sc->sc_dmat, data->map);
             data->map = NULL;
         }
+        if (sc->sc_device_family >= IWX_DEVICE_FAMILY_AX210)
+            iwx_dma_contig_free(&data->applevtd_cmd_dma);
     }
     ring->qid = IWX_INVALID_QUEUE;
     ring->hi_mark = 0;
@@ -2893,7 +3093,11 @@ iwx_prepare_card_hw(struct iwx_softc *sc)
         IWX_SETBITS(sc, IWX_CSR_HW_IF_CONFIG_REG,
                     IWX_CSR_HW_IF_CONFIG_REG_PREPARE);
         
+        t = 0;
         do {
+            uint32_t val = IWX_READ(sc, IWX_CSR_HW_IF_CONFIG_REG);
+            if (val == 0xFFFFFFFF)
+                return ENXIO;
             if (iwx_set_hw_ready(sc))
                 return 0;
             DELAY(200);
@@ -3179,6 +3383,9 @@ iwx_stop_device(struct iwx_softc *sc)
     iwx_reset_rx_ring(sc, &sc->rxq);
     for (qid = 0; qid < nitems(sc->txq); qid++)
         iwx_reset_tx_ring(sc, &sc->txq[qid]);
+
+    if (sc->sc_device_family >= IWX_DEVICE_FAMILY_AX210)
+        applevtdTxResetQuarantine();
     
     /* Make sure (redundant) we've released our request to stay awake */
     IWX_CLRBITS(sc, IWX_CSR_GP_CNTRL,
@@ -4913,7 +5120,8 @@ iwx_update_rx_desc(struct iwx_softc *sc, struct iwx_rx_ring *ring, int idx)
     if (sc->sc_device_family >= IWX_DEVICE_FAMILY_AX210) {
         struct iwx_rx_transfer_desc *bd = (struct iwx_rx_transfer_desc *)ring->desc;
         
-        bd[idx].addr = htole64(data->map->dm_segs[0].location);
+        bd[idx].addr = htole64(sc->sc_device_family >= IWX_DEVICE_FAMILY_AX210 ?
+                              data->applevtd_dma.paddr : data->map->dm_segs[0].location);
         bd[idx].rbid = htole16(idx & 0x0fff);
     } else
         ((uint64_t *)ring->desc)[idx] =
@@ -4960,13 +5168,13 @@ iwx_rx_addbuf(struct iwx_softc *sc, int size, int idx)
         XYLog("could not allocate RX mbuf\n");
         return ENOMEM;
     }
-    data->map->dm_nsegs = data->map->cursor->getPhysicalSegments(m, &data->map->dm_segs[0], 1);
-    if (data->map->dm_nsegs == 0) {
-        /* XXX */
-        if (fatal)
-            panic("%s: could not load RX mbuf", DEVNAME(sc));
-        mbuf_freem(m);
-        return ENOMEM;
+    if (sc->sc_device_family < IWX_DEVICE_FAMILY_AX210) {
+        data->map->dm_nsegs = data->map->cursor->getPhysicalSegments(m, &data->map->dm_segs[0], 1);
+        if (data->map->dm_nsegs == 0) {
+            if (fatal) panic("%s: could not load RX mbuf", DEVNAME(sc));
+            mbuf_freem(m);
+            return ENOMEM;
+        }
     }
     data->m = m;
     //    bus_dmamap_sync(sc->sc_dmat, data->map, 0, size, BUS_DMASYNC_PREREAD);
@@ -5818,6 +6026,8 @@ iwx_txd_done(struct iwx_softc *sc, struct iwx_tx_data *txd)
     //    bus_dmamap_sync(sc->sc_dmat, txd->map, 0, txd->map->dm_mapsize,
     //        BUS_DMASYNC_POSTWRITE);
     //    bus_dmamap_unload(sc->sc_dmat, txd->map);
+    if (sc->sc_device_family >= IWX_DEVICE_FAMILY_AX210)
+        applevtdTxRetire(txd, true);
     mbuf_freem(txd->m);
     txd->m = NULL;
     
@@ -6350,26 +6560,33 @@ iwx_send_cmd(struct iwx_softc *sc, struct iwx_host_cmd *hcmd)
             err = EINVAL;
             goto out;
         }
-        mbuf_allocpacket(MBUF_WAITOK, totlen, &max_chunks, &m);
-        if (m == NULL) {
-            XYLog("%s: could not get fw cmd mbuf (%zd bytes)\n",
-                  DEVNAME(sc), totlen);
-            err = ENOMEM;
-            goto out;
+        if (sc->sc_device_family >= IWX_DEVICE_FAMILY_AX210) {
+            if (!txdata->applevtd_cmd_dma.cmd || totlen > txdata->applevtd_cmd_dma.size) {
+                XYLog("%s: AppleVTD command backing unavailable (%zd bytes)\n", DEVNAME(sc), totlen);
+                err = ENOMEM;
+                goto out;
+            }
+            cmd = (struct iwx_device_cmd *)txdata->applevtd_cmd_dma.vaddr;
+            paddr = txdata->applevtd_cmd_dma.paddr;
+        } else {
+            mbuf_allocpacket(MBUF_WAITOK, totlen, &max_chunks, &m);
+            if (m == NULL) {
+                XYLog("%s: could not get fw cmd mbuf (%zd bytes)\n", DEVNAME(sc), totlen);
+                err = ENOMEM;
+                goto out;
+            }
+            mbuf_setlen(m, totlen);
+            mbuf_pkthdr_setlen(m, totlen);
+            cmd = mtod(m, struct iwx_device_cmd *);
+            txdata->map->dm_nsegs = txdata->map->cursor->getPhysicalSegmentsWithCoalesce(m, &seg, 1);
+            if (txdata->map->dm_nsegs == 0) {
+                XYLog("%s: could not load fw cmd mbuf (%zd bytes)\n", DEVNAME(sc), totlen);
+                mbuf_freem(m);
+                goto out;
+            }
+            txdata->m = m;
+            paddr = seg.location;
         }
-        mbuf_setlen(m, totlen);
-        mbuf_pkthdr_setlen(m, totlen);
-        cmd = mtod(m, struct iwx_device_cmd *);
-        txdata->map->dm_nsegs = txdata->map->cursor->getPhysicalSegmentsWithCoalesce(m, &seg, 1);
-        if (txdata->map->dm_nsegs == 0) {
-            XYLog("%s: could not load fw cmd mbuf (%zd bytes)\n",
-                  DEVNAME(sc), totlen);
-            mbuf_freem(m);
-            goto out;
-        }
-//                XYLog("map fw cmd dm_nsegs=%d\n", txdata->map->dm_nsegs);
-        txdata->m = m; /* mbuf will be freed in iwm_cmd_done() */
-        paddr = seg.location;
     } else {
         cmd = &ring->cmd[idx];
         paddr = txdata->cmd_paddr;
@@ -6391,7 +6608,12 @@ iwx_send_cmd(struct iwx_softc *sc, struct iwx_host_cmd *hcmd)
         off += hcmd->len[i];
     }
     KASSERT(off == paylen, "off == paylen");
-    
+    if (sc->sc_device_family >= IWX_DEVICE_FAMILY_AX210 && paylen > datasz) {
+        if (txdata->applevtd_cmd_dma.cmd->synchronize(kIODirectionOut) != kIOReturnSuccess) {
+            err = EIO;
+            goto out;
+        }
+    }
     desc->tbs[0].tb_len = htole16(MIN(hdrlen + paylen, IWX_FIRST_TB_SIZE));
     addr = htole64(paddr);
     memcpy(&desc->tbs[0].addr, &addr, sizeof(addr));
@@ -6815,7 +7037,10 @@ iwx_tx(struct iwx_softc *sc, mbuf_t m, struct ieee80211_node *ni, int ac)
     /* Trim 802.11 header. */
     mbuf_adj(m, hdrlen);
     
-    nsegs = data->map->cursor->getPhysicalSegmentsWithCoalesce(m, &segs[0], IWX_TFH_NUM_TBS - 2);
+    if (sc->sc_device_family >= IWX_DEVICE_FAMILY_AX210)
+        nsegs = applevtdTxPrepare(data, m, &segs[0], IWX_TFH_NUM_TBS - 2);
+    else
+        nsegs = data->map->cursor->getPhysicalSegmentsWithCoalesce(m, &segs[0], IWX_TFH_NUM_TBS - 2);
     if (nsegs == 0) {
         XYLog("%s: can't map mbuf (error %d)\n", DEVNAME(sc),
               nsegs);
@@ -10827,6 +11052,23 @@ iwx_rx_pkt(struct iwx_softc *sc, struct iwx_rx_data *data, struct mbuf_list *ml)
     //        BUS_DMASYNC_POSTREAD);
     
     m0 = data->m;
+    /*
+     * AX210 RX uses a prepared AppleVTD/IODMACommand backing buffer as the
+     * hardware DMA target.  The mbuf is only the CPU/network-stack copy.
+     * Synchronize and copy the completed DMA buffer before interpreting any
+     * packet header; otherwise qid/idx/group/cmd below would be read from an
+     * unsynchronized mbuf and could not safely determine the packet type.
+     */
+    if (sc->sc_device_family >= IWX_DEVICE_FAMILY_AX210) {
+        if (!m0 || !mbuf_data(m0) || mbuf_len(m0) < IWX_RBUF_SIZE ||
+            !data->applevtd_dma.cmd || !data->applevtd_dma.vaddr ||
+            data->applevtd_dma.size != IWX_RBUF_SIZE ||
+            data->applevtd_dma.cmd->synchronize(kIODirectionIn) != kIOReturnSuccess) {
+            ifp->netStat->inputErrors++;
+            return;
+        }
+        memcpy(mbuf_data(m0), data->applevtd_dma.vaddr, IWX_RBUF_SIZE);
+    }
     while (m0 && offset + minsz < IWX_RBUF_SIZE) {
         pkt = (struct iwx_rx_packet *)((uint8_t*)mbuf_data(m0) + offset);
         qid = pkt->hdr.qid;
@@ -10857,8 +11099,10 @@ iwx_rx_pkt(struct iwx_softc *sc, struct iwx_rx_data *data, struct mbuf_list *ml)
             break;
         
         if (code == IWX_REPLY_RX_MPDU_CMD && ++nmpdu == 1) {
-            /* Take mbuf m0 off the RX ring. */
-            if (iwx_rx_addbuf(sc, IWX_RBUF_SIZE, sc->rxq.cur)) {
+            /* Take mbuf m0 off the RX ring. AX210 hardware DMA is backed by
+               a prepared IODMACommand buffer, not the mbuf itself. */
+            const int rxidx = sc->rxq.cur;
+            if (iwx_rx_addbuf(sc, IWX_RBUF_SIZE, rxidx)) {
                 ifp->netStat->inputErrors++;
                 break;
             }

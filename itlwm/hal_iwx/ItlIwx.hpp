@@ -185,6 +185,25 @@ public:
     
     void releaseAll();
     void joinSSID(const char *ssid, const char *pwd);
+
+    /* Tahoe AppleVTD / AX210 prepared packet DMA backing. */
+    enum { kAppleVTDTxCount = 1024, kAppleVTDTxSize = 8192 };
+    enum { AppleVTDTxFree = 0, AppleVTDTxCopying = 1,
+           AppleVTDTxInflight = 2, AppleVTDTxQuarantined = 3 };
+    struct AppleVTDTxBacking {
+        struct iwx_dma_info dma;
+        struct iwx_tx_data *owner;
+        uint32_t state;
+    };
+    AppleVTDTxBacking fAppleVTDTx[kAppleVTDTxCount] = {};
+    uint32_t fAppleVTDTxNext = 0;
+    bool fAppleVTDTxReady = false;
+    IOLock *fAppleVTDTxLock = NULL;
+    bool applevtdTxAllocate();
+    int applevtdTxPrepare(struct iwx_tx_data *, mbuf_t, IOPhysicalSegment *, unsigned);
+    void applevtdTxRetire(struct iwx_tx_data *, bool normal);
+    void applevtdTxResetQuarantine();
+    void applevtdTxFree();
     
     //utils
     static void *mallocarray(size_t, size_t, int, int);

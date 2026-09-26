@@ -331,6 +331,9 @@ struct iwx_dma_info {
 struct iwx_tx_data {
 	bus_dmamap_t	map;
 	bus_addr_t	cmd_paddr;
+	/* Tahoe AppleVTD: non-inline AX210 TX payload uses prepared backing. */
+	uint16_t applevtd_token;
+	struct iwx_dma_info applevtd_cmd_dma;
 	mbuf_t m;
 	struct iwx_node *in;
     int flags;
@@ -361,6 +364,8 @@ struct iwx_tx_ring {
 struct iwx_rx_data {
 	mbuf_t m;
 	bus_dmamap_t	map;
+	/* Tahoe AppleVTD: AX210 hardware owns this prepared DMA backing. */
+	struct iwx_dma_info applevtd_dma;
 };
 
 struct iwx_rx_ring {

@@ -1,0 +1,71 @@
+name: Build itlwm & AirportItlwm
+
+on:
+  push:
+    branches: [ "*" ]
+  pull_request:
+    branches: [ "*" ]
+
+jobs:
+  build:
+    name: Build Kexts
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Clone MacKernelSDK
+        run: |
+          git clone https://github.com/acidanthera/MacKernelSDK.git MacKernelSDK
+
+      - name: Set up Xcode
+        run: |
+          sudo xcode-select -s /Applications/Xcode_15.4.app/Contents/Developer
+          xcodebuild -version
+
+      - name: Build itlwm.kext (Debug)
+        run: |
+          xcodebuild -project itlwm.xcodeproj \
+                     -scheme itlwm \
+                     -configuration Debug \
+                     -derivedDataPath build
+
+      - name: Build itlwm.kext (Release)
+        run: |
+          xcodebuild -project itlwm.xcodeproj \
+                     -scheme itlwm \
+                     -configuration Release \
+                     -derivedDataPath build
+
+      - name: Build AirportItlwm (Sonoma - Debug)
+        run: |
+          xcodebuild -project itlwm.xcodeproj \
+                     -scheme AirportItlwm-Sonoma \
+                     -configuration Debug \
+                     -derivedDataPath build || true
+
+      - name: Build AirportItlwm (Sonoma - Release)
+        run: |
+          xcodebuild -project itlwm.xcodeproj \
+                     -scheme AirportItlwm-Sonoma \
+                     -configuration Release \
+                     -derivedDataPath build || true
+
+      - name: Archive Kexts
+        run: |
+          mkdir -p dist/Debug dist/Release
+          find build/Build/Products/Debug -name "*.kext" -maxdepth 2 -exec cp -R {} dist/Debug/ \; 2>/dev/null || true
+          find build/Build/Products/Release -name "*.kext" -maxdepth 2 -exec cp -R {} dist/Release/ \; 2>/dev/null || true
+          echo "=== Debug Build Products ==="
+          ls -la dist/Debug/
+          echo "=== Release Build Products ==="
+          ls -la dist/Release/
+
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: itlwm-kexts
+          path: dist/

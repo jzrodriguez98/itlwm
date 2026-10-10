@@ -21,6 +21,7 @@
 /* End PBXAggregateTarget section */
 
 /* Begin PBXBuildFile section */
+		A112F5371BD949CD8CA19D88 /* WCL.cpp in Sources */ = {isa = PBXBuildFile; fileRef = A112F5371BD949CD8CA19D89 /* WCL.cpp */; };
 		024A07B023FCBC3C009FBA6C /* itlwm.hpp in Headers */ = {isa = PBXBuildFile; fileRef = 024A07AF23FCBC3C009FBA6C /* itlwm.hpp */; };
 		024A07B223FCBC3C009FBA6C /* itlwm.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 024A07B123FCBC3C009FBA6C /* itlwm.cpp */; };
 		024A082E23FCBC6C009FBA6C /* aes.c in Sources */ = {isa = PBXBuildFile; fileRef = 024A07C923FCBC6C009FBA6C /* aes.c */; };
@@ -991,6 +992,7 @@
 		F8F92586240974EF0088B8D5 /* types.h in Headers */ = {isa = PBXBuildFile; fileRef = F8F9257B240974EF0088B8D5 /* types.h */; };
 		F8F9EDE1240B7415009CB8E7 /* _task.cpp in Sources */ = {isa = PBXBuildFile; fileRef = F8F9EDE0240B7415009CB8E7 /* _task.cpp */; };
 		F8FA0EEC2501E7EE00B1822E /* zutil.h in Headers */ = {isa = PBXBuildFile; fileRef = F8FA0EEB2501E7EE00B1822E /* zutil.h */; };
+		A7D000012026100700000001 /* ItlDma.cpp in Sources */ = {isa = PBXBuildFile; fileRef = A7D000022026100700000001 /* ItlDma.cpp */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -1060,6 +1062,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		A112F5371BD949CD8CA19D89 /* WCL.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = AirportItlwm/WCL/WCL.cpp; sourceTree = SOURCE_ROOT; };
 		024A07AC23FCBC3C009FBA6C /* itlwm.kext */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = itlwm.kext; sourceTree = BUILT_PRODUCTS_DIR; };
 		024A07AF23FCBC3C009FBA6C /* itlwm.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = itlwm.hpp; sourceTree = "<group>"; };
 		024A07B123FCBC3C009FBA6C /* itlwm.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = itlwm.cpp; sourceTree = "<group>"; };
@@ -1305,6 +1308,51 @@
 		F8F9EDE0240B7415009CB8E7 /* _task.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = _task.cpp; sourceTree = "<group>"; };
 		F8FA0EEB2501E7EE00B1822E /* zutil.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = zutil.h; sourceTree = "<group>"; };
 		F8FA0EED2501E8C100B1822E /* zutil.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = zutil.c; sourceTree = "<group>"; };
+		3FCE22CDA614FF2D176FAC46 /* AirportItlwm.kext */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AirportItlwm.kext; sourceTree = BUILT_PRODUCTS_DIR; };
+		873185406E684353B0988B8A /* AirportItlwm.kext */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AirportItlwm.kext; sourceTree = BUILT_PRODUCTS_DIR; };
+		F8E3806526D533D400568FEB /* iwlwifi-ty-a0-gf-a0.pnvm */ = {isa = PBXFileReference; lastKnownFileType = file; path = "iwlwifi-ty-a0-gf-a0.pnvm"; sourceTree = "<group>"; };
+		F8E49A12249B923500BE6868 /* ItlNetworkUserClient.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ItlNetworkUserClient.cpp; sourceTree = "<group>"; };
+		F8E49A13249B923500BE6868 /* ItlNetworkUserClient.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = ItlNetworkUserClient.hpp; sourceTree = "<group>"; };
+		F8EE4D1A241786B0002FA666 /* FwData.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = FwData.h; sourceTree = "<group>"; };
+		F8F7EA34252D834500520FD4 /* IO80211VirtualInterface.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = IO80211VirtualInterface.h; sourceTree = "<group>"; };
+		F8F7EA35252D834500520FD4 /* IO80211Controller.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = IO80211Controller.h; sourceTree = "<group>"; };
+		F8F7EA36252D834500520FD4 /* IO80211P2PInterface.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = IO80211P2PInterface.h; sourceTree = "<group>"; };
+		F8F7EA37252D834500520FD4 /* IO80211SkywalkInterface.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = IO80211SkywalkInterface.h; sourceTree = "<group>"; };
+		F8F7EA38252D834500520FD4 /* IO80211Interface.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = IO80211Interface.h; sourceTree = "<group>"; };
+		F8F7EA39252D834500520FD4 /* IO80211WorkLoop.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = IO80211WorkLoop.h; sourceTree = "<group>"; };
+		F8F884F02791284800545F2C /* iwlwifi-cc-a0-68.ucode */ = {isa = PBXFileReference; lastKnownFileType = file; path = "iwlwifi-cc-a0-68.ucode"; sourceTree = "<group>"; };
+		F8F884F12791285A00545F2C /* iwlwifi-Qu-b0-hr-b0-68.ucode */ = {isa = PBXFileReference; lastKnownFileType = file; path = "iwlwifi-Qu-b0-hr-b0-68.ucode"; sourceTree = "<group>"; };
+		F8F884F22791286E00545F2C /* iwlwifi-Qu-b0-jf-b0-68.ucode */ = {isa = PBXFileReference; lastKnownFileType = file; path = "iwlwifi-Qu-b0-jf-b0-68.ucode"; sourceTree = "<group>"; };
+		F8F884F32791289200545F2C /* iwlwifi-Qu-c0-hr-b0-68.ucode */ = {isa = PBXFileReference; lastKnownFileType = file; path = "iwlwifi-Qu-c0-hr-b0-68.ucode"; sourceTree = "<group>"; };
+		F8F884F42791289C00545F2C /* iwlwifi-Qu-c0-jf-b0-68.ucode */ = {isa = PBXFileReference; lastKnownFileType = file; path = "iwlwifi-Qu-c0-jf-b0-68.ucode"; sourceTree = "<group>"; };
+		F8F884F5279128B300545F2C /* iwlwifi-QuZ-a0-hr-b0-68.ucode */ = {isa = PBXFileReference; lastKnownFileType = file; path = "iwlwifi-QuZ-a0-hr-b0-68.ucode"; sourceTree = "<group>"; };
+		F8F884F6279128C400545F2C /* iwlwifi-QuZ-a0-jf-b0-68.ucode */ = {isa = PBXFileReference; lastKnownFileType = file; path = "iwlwifi-QuZ-a0-jf-b0-68.ucode"; sourceTree = "<group>"; };
+		F8F884F7279128DD00545F2C /* iwlwifi-so-a0-gf-a0-68.ucode */ = {isa = PBXFileReference; lastKnownFileType = file; path = "iwlwifi-so-a0-gf-a0-68.ucode"; sourceTree = "<group>"; };
+		F8F884F92791293C00545F2C /* iwlwifi-so-a0-gf4-a0-68.ucode */ = {isa = PBXFileReference; lastKnownFileType = file; path = "iwlwifi-so-a0-gf4-a0-68.ucode"; sourceTree = "<group>"; };
+		F8F884FA2791294B00545F2C /* iwlwifi-so-a0-hr-b0-68.ucode */ = {isa = PBXFileReference; lastKnownFileType = file; path = "iwlwifi-so-a0-hr-b0-68.ucode"; sourceTree = "<group>"; };
+		F8F884FB2791295D00545F2C /* iwlwifi-so-a0-jf-b0-68.ucode */ = {isa = PBXFileReference; lastKnownFileType = file; path = "iwlwifi-so-a0-jf-b0-68.ucode"; sourceTree = "<group>"; };
+		F8F884FC2791296C00545F2C /* iwlwifi-ty-a0-gf-a0-68.ucode */ = {isa = PBXFileReference; lastKnownFileType = file; path = "iwlwifi-ty-a0-gf-a0-68.ucode"; sourceTree = "<group>"; };
+		F8F92573240974EE0088B8D5 /* bitfield.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = bitfield.h; sourceTree = "<group>"; };
+		F8F92574240974EE0088B8D5 /* kernel.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = kernel.h; sourceTree = "<group>"; };
+		F8F92578240974EE0088B8D5 /* random.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = random.h; sourceTree = "<group>"; };
+		F8F9257B240974EF0088B8D5 /* types.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = types.h; sourceTree = "<group>"; };
+		F8F9EDDF240B4741009CB8E7 /* _task.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = _task.h; sourceTree = "<group>"; };
+		F8F9EDE0240B7415009CB8E7 /* _task.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = _task.cpp; sourceTree = "<group>"; };
+		F8FA0EEB2501E7EE00B1822E /* zutil.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = zutil.h; sourceTree = "<group>"; };
+		F8FA0EED2501E8C100B1822E /* zutil.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = zutil.c; sourceTree = "<group>"; };
+		A7D000022026100700000001 /* ItlDma.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ItlDma.cpp; sourceTree = "<group>"; };
+		A7D000032026100700000001 /* ItlDma.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = ItlDma.hpp; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		024A07A923FCBC3C009FBA6C /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				5088ECBD252884870068A63D /* libkmod.a in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -1380,6 +1428,14 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		1A48D424B8D644E591B45862 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F8D94CF02B9ABFE20081A3C4 /* libkmod.a in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -1401,6 +1457,7 @@
 		024A07AD23FCBC3C009FBA6C /* Products */ = {
 			isa = PBXGroup;
 			children = (
+				873185406E684353B0988B8A /* AirportItlwm.kext */,
 				024A07AC23FCBC3C009FBA6C /* itlwm.kext */,
 				F89B6BB925021C9C000F77FF /* AirportItlwm.kext */,
 				35CBE6BA251CB89700435CBC /* AirportItlwm.kext */,
@@ -1756,6 +1813,8 @@
 		F8D6CD4F2442E0D100D2A454 /* itl80211 */ = {
 			isa = PBXGroup;
 			children = (
+				A7D000022026100700000001 /* ItlDma.cpp */,
+				A7D000032026100700000001 /* ItlDma.hpp */,
 				F8F9256D240972EE0088B8D5 /* linux */,
 				024A07C723FCBC6C009FBA6C /* openbsd */,
 				024A07BA23FCBC6C009FBA6C /* compat.cpp */,
@@ -2148,6 +2207,46 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		3B64F62353D14E5EA028E18D /* Headers */ = {
+			isa = PBXHeadersBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F8D94C842B9ABFE20081A3C4 /* CCDataPipe.h in Headers */,
+				F8D94C852B9ABFE20081A3C4 /* debug.h in Headers */,
+				F8D94C862B9ABFE20081A3C4 /* IOSkywalkEthernetInterface.h in Headers */,
+				F8D94C872B9ABFE20081A3C4 /* IO80211InfraProtocol.h in Headers */,
+				F8D94C882B9ABFE20081A3C4 /* IOSkywalkLogicalLink.h in Headers */,
+				F8D94C892B9ABFE20081A3C4 /* AirportItlwmEthernetInterface.hpp in Headers */,
+				F8D94C8A2B9ABFE20081A3C4 /* IOSkywalkNetworkPacket.h in Headers */,
+				F8D94C8B2B9ABFE20081A3C4 /* apple80211_ioctl.h in Headers */,
+				F8D94C8C2B9ABFE20081A3C4 /* CCLogPipe.h in Headers */,
+				F8D94C8D2B9ABFE20081A3C4 /* IO80211P2PInterface.h in Headers */,
+				F8D94C8E2B9ABFE20081A3C4 /* CCPipe.h in Headers */,
+				F8D94C8F2B9ABFE20081A3C4 /* IO80211WorkLoop.h in Headers */,
+				F8D94C902B9ABFE20081A3C4 /* apple80211_var.h in Headers */,
+				F8D94C912B9ABFE20081A3C4 /* IOSkywalkPacketBufferPool.h in Headers */,
+				F8D94C922B9ABFE20081A3C4 /* IOSkywalkLegacyEthernetInterface.h in Headers */,
+				F8D94C932B9ABFE20081A3C4 /* AirportItlwmInterface.hpp in Headers */,
+				F8D94C942B9ABFE20081A3C4 /* IO80211Interface.h in Headers */,
+				F8D94C952B9ABFE20081A3C4 /* IO80211WorkQueue.h in Headers */,
+				F8D94C962B9ABFE20081A3C4 /* (null) in Headers */,
+				F8D94C972B9ABFE20081A3C4 /* IO80211InfraInterface.h in Headers */,
+				F8D94C982B9ABFE20081A3C4 /* IO80211SkywalkInterface.h in Headers */,
+				F8D94C992B9ABFE20081A3C4 /* CCLogStream.h in Headers */,
+				F8D94C9A2B9ABFE20081A3C4 /* AirportItlwmSkywalkInterface.hpp in Headers */,
+				F8D94C9B2B9ABFE20081A3C4 /* AirportItlwm.hpp in Headers */,
+				F8D94C9C2B9ABFE20081A3C4 /* IO80211ControllerV2.h in Headers */,
+				F8D94C9D2B9ABFE20081A3C4 /* IOPCIEDeviceWrapper.hpp in Headers */,
+				F8D94C9E2B9ABFE20081A3C4 /* IO80211VirtualInterface.h in Headers */,
+				F8D94C9F2B9ABFE20081A3C4 /* IO80211Controller.h in Headers */,
+				F8D94CA02B9ABFE20081A3C4 /* (null) in Headers */,
+				F8D94CA12B9ABFE20081A3C4 /* AirportItlwmV2.hpp in Headers */,
+				F8D94CA22B9ABFE20081A3C4 /* ieee80211_ra.h in Headers */,
+				F8D94CA32B9ABFE20081A3C4 /* CCStream.h in Headers */,
+				F8D94CA42B9ABFE20081A3C4 /* apple80211_wps.h in Headers */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXHeadersBuildPhase section */
 
 /* Begin PBXNativeTarget section */
@@ -2322,6 +2421,44 @@
 			productReference = F8D94CF52B9ABFE20081A3C4 /* AirportItlwm.kext */;
 			productType = "com.apple.product-type.kernel-extension";
 		};
+		A6465A40B44EE5DC353B726B /* AirportItlwm-Tahoe */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 1DF97670B7FC55991F338AA4 /* Build configuration list for PBXNativeTarget "AirportItlwm-Tahoe" */;
+			buildPhases = (
+				F8D94C832B9ABFE20081A3C4 /* Headers */,
+				F8D94CA52B9ABFE20081A3C4 /* Sources */,
+				F8D94CEF2B9ABFE20081A3C4 /* Frameworks */,
+				F8D94CF12B9ABFE20081A3C4 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				F8D94C812B9ABFE20081A3C4 /* PBXTargetDependency */,
+			);
+			name = "AirportItlwm-Tahoe";
+			productName = AirportItlwm;
+			productReference = 3FCE22CDA614FF2D176FAC46 /* AirportItlwm.kext */;
+			productType = "com.apple.product-type.kernel-extension";
+		};
+		C2631DEBF2864F9B8272D88C /* AirportItlwm-Sequoia */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = C9DEB043F00A4DCFAC3294DD /* Build configuration list for PBXNativeTarget "AirportItlwm-Sequoia" */;
+			buildPhases = (
+				3B64F62353D14E5EA028E18D /* Headers */,
+				AFFBDFD057C2402C908ECB89 /* Sources */,
+				1A48D424B8D644E591B45862 /* Frameworks */,
+				9BBFC49C29994E6CA78F1847 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				F8D94C812B9ABFE20081A3C4 /* PBXTargetDependency */,
+			);
+			name = "AirportItlwm-Sequoia";
+			productName = AirportItlwm;
+			productReference = 873185406E684353B0988B8A /* AirportItlwm.kext */;
+			productType = "com.apple.product-type.kernel-extension";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -2388,7 +2525,9 @@
 				F8AE64F5285471560085B4CF /* AirportItlwm-Ventura */,
 				F8B210A72A2EC2680043ECBD /* AirportItlwm-Sonoma14.0 */,
 				F8D94C802B9ABFE20081A3C4 /* AirportItlwm-Sonoma14.4 */,
+				A6465A40B44EE5DC353B726B /* AirportItlwm-Tahoe */,
 				5066D63825287F7900EE6F38 /* fw_gen */,
+				C2631DEBF2864F9B8272D88C /* AirportItlwm-Sequoia */,
 			);
 		};
 /* End PBXProject section */
@@ -2457,6 +2596,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		9BBFC49C29994E6CA78F1847 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
@@ -2486,6 +2632,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A7D000012026100700000001 /* ItlDma.cpp in Sources */,
 				F8A4307325062CE300EA545E /* zutil.c in Sources */,
 				F8294FE424FCBF5100239253 /* FwBinary.cpp in Sources */,
 				F8ED134424FBB5B70068C831 /* ItlIwx.cpp in Sources */,
@@ -3126,6 +3273,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A7D000012026100700000001 /* ItlDma.cpp in Sources */,
 				F8D94CA62B9ABFE20081A3C4 /* rs.cpp in Sources */,
 				F8D94CA72B9ABFE20081A3C4 /* _mbuf.cpp in Sources */,
 				F8D94CA82B9ABFE20081A3C4 /* ieee80211_ra.c in Sources */,
@@ -3171,6 +3319,89 @@
 				F8D94CD02B9ABFE20081A3C4 /* arc4.c in Sources */,
 				F8D94CD12B9ABFE20081A3C4 /* AirportItlwmEthernetInterface.cpp in Sources */,
 				F8D94CD22B9ABFE20081A3C4 /* AirportItlwmSkywalkInterface.cpp in Sources */,
+				A112F5371BD949CD8CA19D88 /* WCL.cpp in Sources */,
+				F8D94CD32B9ABFE20081A3C4 /* blf.c in Sources */,
+				F8D94CD42B9ABFE20081A3C4 /* _ifq.cpp in Sources */,
+				F8D94CD52B9ABFE20081A3C4 /* poly1305.c in Sources */,
+				F8D94CD62B9ABFE20081A3C4 /* key_wrap.c in Sources */,
+				F8D94CD72B9ABFE20081A3C4 /* gmac.c in Sources */,
+				F8D94CD82B9ABFE20081A3C4 /* rmd160.c in Sources */,
+				F8D94CD92B9ABFE20081A3C4 /* idgen.c in Sources */,
+				F8D94CDA2B9ABFE20081A3C4 /* compat.cpp in Sources */,
+				F8D94CDB2B9ABFE20081A3C4 /* zutil.c in Sources */,
+				F8D94CDC2B9ABFE20081A3C4 /* ItlHalService.cpp in Sources */,
+				F8D94CDD2B9ABFE20081A3C4 /* ItlIwx.cpp in Sources */,
+				F8D94CDE2B9ABFE20081A3C4 /* utils.cpp in Sources */,
+				F8D94CDF2B9ABFE20081A3C4 /* fw.cpp in Sources */,
+				F8D94CE02B9ABFE20081A3C4 /* io.cpp in Sources */,
+				F8D94CE12B9ABFE20081A3C4 /* rx.cpp in Sources */,
+				F8D94CE22B9ABFE20081A3C4 /* coex.cpp in Sources */,
+				F8D94CE32B9ABFE20081A3C4 /* tx.cpp in Sources */,
+				F8D94CE42B9ABFE20081A3C4 /* hw.cpp in Sources */,
+				F8D94CE52B9ABFE20081A3C4 /* ItlIwn.cpp in Sources */,
+				F8D94CE62B9ABFE20081A3C4 /* phy.cpp in Sources */,
+				F8D94CE72B9ABFE20081A3C4 /* mac80211.cpp in Sources */,
+				F8D94CE82B9ABFE20081A3C4 /* nvm.cpp in Sources */,
+				F8D94CE92B9ABFE20081A3C4 /* ctxt.cpp in Sources */,
+				F8D94CEA2B9ABFE20081A3C4 /* led.cpp in Sources */,
+				F8D94CEB2B9ABFE20081A3C4 /* power.cpp in Sources */,
+				F8D94CEC2B9ABFE20081A3C4 /* scan.cpp in Sources */,
+				F8D94CED2B9ABFE20081A3C4 /* IOPCIEDeviceWrapper.cpp in Sources */,
+				F8D94CEE2B9ABFE20081A3C4 /* ItlIwm.cpp in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AFFBDFD057C2402C908ECB89 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A7D000012026100700000001 /* ItlDma.cpp in Sources */,
+				F8D94CA62B9ABFE20081A3C4 /* rs.cpp in Sources */,
+				F8D94CA72B9ABFE20081A3C4 /* _mbuf.cpp in Sources */,
+				F8D94CA82B9ABFE20081A3C4 /* ieee80211_ra.c in Sources */,
+				F8D94CA92B9ABFE20081A3C4 /* _task.cpp in Sources */,
+				F8D94CAA2B9ABFE20081A3C4 /* FwBinary.cpp in Sources */,
+				F8D94CAB2B9ABFE20081A3C4 /* ieee80211_proto.c in Sources */,
+				F8D94CAC2B9ABFE20081A3C4 /* _string.c in Sources */,
+				F8D94CAD2B9ABFE20081A3C4 /* ieee80211_ioctl.c in Sources */,
+				F8D94CAE2B9ABFE20081A3C4 /* ieee80211.c in Sources */,
+				F8D94CAF2B9ABFE20081A3C4 /* ieee80211_rssadapt.c in Sources */,
+				F8D94CB02B9ABFE20081A3C4 /* ieee80211_input.c in Sources */,
+				F8D94CB12B9ABFE20081A3C4 /* timeout.c in Sources */,
+				F8D94CB22B9ABFE20081A3C4 /* ieee80211_mira.c in Sources */,
+				F8D94CB32B9ABFE20081A3C4 /* ieee80211_crypto_bip.c in Sources */,
+				F8D94CB42B9ABFE20081A3C4 /* ieee80211_crypto_tkip.c in Sources */,
+				F8D94CB52B9ABFE20081A3C4 /* ieee80211_crypto_ccmp.c in Sources */,
+				F8D94CB62B9ABFE20081A3C4 /* ieee80211_crypto_wep.c in Sources */,
+				F8D94CB72B9ABFE20081A3C4 /* ieee80211_pae_input.c in Sources */,
+				F8D94CB82B9ABFE20081A3C4 /* ieee80211_amrr.c in Sources */,
+				F8D94CB92B9ABFE20081A3C4 /* ieee80211_output.c in Sources */,
+				F8D94CBA2B9ABFE20081A3C4 /* ieee80211_crypto.c in Sources */,
+				F8D94CBB2B9ABFE20081A3C4 /* CTimeout.cpp in Sources */,
+				F8D94CBC2B9ABFE20081A3C4 /* ieee80211_regdomain.c in Sources */,
+				F8D94CBD2B9ABFE20081A3C4 /* ieee80211_node.c in Sources */,
+				F8D94CBE2B9ABFE20081A3C4 /* ieee80211_pae_output.c in Sources */,
+				F8D94CBF2B9ABFE20081A3C4 /* sha1-pbkdf2.c in Sources */,
+				F8D94CC02B9ABFE20081A3C4 /* aes.c in Sources */,
+				F8D94CC12B9ABFE20081A3C4 /* hmac.c in Sources */,
+				F8D94CC22B9ABFE20081A3C4 /* sha2.c in Sources */,
+				F8D94CC32B9ABFE20081A3C4 /* rijndael.c in Sources */,
+				F8D94CC42B9ABFE20081A3C4 /* ecb3_enc.c in Sources */,
+				F8D94CC52B9ABFE20081A3C4 /* set_key.c in Sources */,
+				F8D94CC62B9ABFE20081A3C4 /* cast.c in Sources */,
+				F8D94CC72B9ABFE20081A3C4 /* michael.c in Sources */,
+				F8D94CC82B9ABFE20081A3C4 /* arp.c in Sources */,
+				F8D94CC92B9ABFE20081A3C4 /* sha1.c in Sources */,
+				F8D94CCA2B9ABFE20081A3C4 /* cmac.c in Sources */,
+				F8D94CCB2B9ABFE20081A3C4 /* ecb_enc.c in Sources */,
+				F8D94CCC2B9ABFE20081A3C4 /* chachapoly.c in Sources */,
+				F8D94CCD2B9ABFE20081A3C4 /* AirportItlwmV2.cpp in Sources */,
+				F8D94CCE2B9ABFE20081A3C4 /* (null) in Sources */,
+				F8D94CCF2B9ABFE20081A3C4 /* md5.c in Sources */,
+				F8D94CD02B9ABFE20081A3C4 /* arc4.c in Sources */,
+				F8D94CD12B9ABFE20081A3C4 /* AirportItlwmEthernetInterface.cpp in Sources */,
+				F8D94CD22B9ABFE20081A3C4 /* AirportItlwmSkywalkInterface.cpp in Sources */,
+				A112F5371BD949CD8CA19D88 /* WCL.cpp in Sources */,
 				F8D94CD32B9ABFE20081A3C4 /* blf.c in Sources */,
 				F8D94CD42B9ABFE20081A3C4 /* _ifq.cpp in Sources */,
 				F8D94CD52B9ABFE20081A3C4 /* poly1305.c in Sources */,
@@ -3399,6 +3630,7 @@
 				GCC_PRECOMPILE_PREFIX_HEADER = YES;
 				GCC_PREFIX_HEADER = itlwm/PrivateSPI.pch;
 				GCC_PREPROCESSOR_DEFINITIONS = (
+				AIRPORT_VTD,
 					"$(inherited)",
 					__PRIVATE_SPI__,
 				);
@@ -3426,6 +3658,7 @@
 				GCC_PRECOMPILE_PREFIX_HEADER = YES;
 				GCC_PREFIX_HEADER = itlwm/PrivateSPI.pch;
 				GCC_PREPROCESSOR_DEFINITIONS = (
+				AIRPORT_VTD,
 					__PRIVATE_SPI__,
 					"$(inherited)",
 				);
@@ -3956,6 +4189,142 @@
 			};
 			name = Release;
 		};
+		7D5753727745775F75788913 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CONFIGURATION_BUILD_DIR = "$(SYMROOT)/$(CONFIGURATION)/Tahoe";
+				CURRENT_PROJECT_VERSION = "$(MODULE_VERSION)";
+				GCC_PRECOMPILE_PREFIX_HEADER = YES;
+				GCC_PREFIX_HEADER = itlwm/PrivateSPI.pch;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					AIRPORT_WCL,
+					AIRPORT_VTD,
+					"$(inherited)",
+					AIRPORT,
+					"__IO80211_TARGET=__MAC_26_0",
+					__PRIVATE_SPI__,
+					IO80211FAMILY_V2,
+				);
+				INFOPLIST_FILE = "AirportItlwm/WCL/Info.plist";
+				LIBRARY_SEARCH_PATHS = (
+					"$(PROJECT_DIR)/itl80211",
+					"$(inherited)",
+					"$(PROJECT_DIR)/itl80211/openbsd",
+					"$(PROJECT_DIR)/itl80211/linux",
+					"$(PROJECT_DIR)/MacKernelSDK/Library/x86_64",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 10.15;
+				MODULE_NAME = com.zxystd.AirportItlwm;
+				PRODUCT_BUNDLE_IDENTIFIER = com.zxystd.AirportItlwm;
+				PRODUCT_MODULE_NAME = AirportItlwm;
+				PRODUCT_NAME = AirportItlwm;
+				SYSTEM_HEADER_SEARCH_PATHS = "itl80211/openbsd itl80211 include";
+				WRAPPER_EXTENSION = kext;
+			};
+			name = Debug;
+		};
+		2B4AD1BBF0014C848E6A7F18 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CONFIGURATION_BUILD_DIR = "$(SYMROOT)/$(CONFIGURATION)/Sequoia";
+				CURRENT_PROJECT_VERSION = "$(MODULE_VERSION)";
+				GCC_PRECOMPILE_PREFIX_HEADER = YES;
+				GCC_PREFIX_HEADER = itlwm/PrivateSPI.pch;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					AIRPORT_WCL,
+					AIRPORT_VTD,
+					"$(inherited)",
+					AIRPORT,
+					"__IO80211_TARGET=__MAC_15_2",
+					__PRIVATE_SPI__,
+					IO80211FAMILY_V2,
+				);
+				INFOPLIST_FILE = "AirportItlwm/WCL/Sequoia-Info.plist";
+				LIBRARY_SEARCH_PATHS = (
+					"$(PROJECT_DIR)/itl80211",
+					"$(inherited)",
+					"$(PROJECT_DIR)/itl80211/openbsd",
+					"$(PROJECT_DIR)/itl80211/linux",
+					"$(PROJECT_DIR)/MacKernelSDK/Library/x86_64",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 15.2;
+				MODULE_NAME = com.zxystd.AirportItlwm;
+				PRODUCT_BUNDLE_IDENTIFIER = com.zxystd.AirportItlwm;
+				PRODUCT_MODULE_NAME = AirportItlwm;
+				PRODUCT_NAME = AirportItlwm;
+				SYSTEM_HEADER_SEARCH_PATHS = "itl80211/openbsd itl80211 include";
+				WRAPPER_EXTENSION = kext;
+			};
+			name = Debug;
+		};
+		D92AB006FB4B2B6A6032F9C7 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CONFIGURATION_BUILD_DIR = "$(SYMROOT)/$(CONFIGURATION)/Tahoe";
+				CURRENT_PROJECT_VERSION = "$(MODULE_VERSION)";
+				GCC_PRECOMPILE_PREFIX_HEADER = YES;
+				GCC_PREFIX_HEADER = itlwm/PrivateSPI.pch;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					AIRPORT_WCL,
+					AIRPORT_VTD,
+					"__IO80211_TARGET=__MAC_26_0",
+					AIRPORT,
+					__PRIVATE_SPI__,
+					"$(inherited)",
+					IO80211FAMILY_V2,
+				);
+				INFOPLIST_FILE = "AirportItlwm/WCL/Info.plist";
+				LIBRARY_SEARCH_PATHS = (
+					"$(PROJECT_DIR)/itl80211",
+					"$(inherited)",
+					"$(PROJECT_DIR)/itl80211/openbsd",
+					"$(PROJECT_DIR)/itl80211/linux",
+					"$(PROJECT_DIR)/MacKernelSDK/Library/x86_64",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 10.15;
+				MODULE_NAME = com.zxystd.AirportItlwm;
+				PRODUCT_BUNDLE_IDENTIFIER = com.zxystd.AirportItlwm;
+				PRODUCT_MODULE_NAME = AirportItlwm;
+				PRODUCT_NAME = AirportItlwm;
+				SYSTEM_HEADER_SEARCH_PATHS = "itl80211/openbsd itl80211 include";
+				WRAPPER_EXTENSION = kext;
+			};
+			name = Release;
+		};
+		E71DD1C8720A4A5E8D09A1CD /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CONFIGURATION_BUILD_DIR = "$(SYMROOT)/$(CONFIGURATION)/Sequoia";
+				CURRENT_PROJECT_VERSION = "$(MODULE_VERSION)";
+				GCC_PRECOMPILE_PREFIX_HEADER = YES;
+				GCC_PREFIX_HEADER = itlwm/PrivateSPI.pch;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					AIRPORT_WCL,
+					AIRPORT_VTD,
+					"__IO80211_TARGET=__MAC_15_2",
+					AIRPORT,
+					__PRIVATE_SPI__,
+					"$(inherited)",
+					IO80211FAMILY_V2,
+				);
+				INFOPLIST_FILE = "AirportItlwm/WCL/Sequoia-Info.plist";
+				LIBRARY_SEARCH_PATHS = (
+					"$(PROJECT_DIR)/itl80211",
+					"$(inherited)",
+					"$(PROJECT_DIR)/itl80211/openbsd",
+					"$(PROJECT_DIR)/itl80211/linux",
+					"$(PROJECT_DIR)/MacKernelSDK/Library/x86_64",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 15.2;
+				MODULE_NAME = com.zxystd.AirportItlwm;
+				PRODUCT_BUNDLE_IDENTIFIER = com.zxystd.AirportItlwm;
+				PRODUCT_MODULE_NAME = AirportItlwm;
+				PRODUCT_NAME = AirportItlwm;
+				SYSTEM_HEADER_SEARCH_PATHS = "itl80211/openbsd itl80211 include";
+				WRAPPER_EXTENSION = kext;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -4054,6 +4423,24 @@
 			buildConfigurations = (
 				F8D94CF32B9ABFE20081A3C4 /* Debug */,
 				F8D94CF42B9ABFE20081A3C4 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		1DF97670B7FC55991F338AA4 /* Build configuration list for PBXNativeTarget "AirportItlwm-Tahoe" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				7D5753727745775F75788913 /* Debug */,
+				D92AB006FB4B2B6A6032F9C7 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		C9DEB043F00A4DCFAC3294DD /* Build configuration list for PBXNativeTarget "AirportItlwm-Sequoia" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				2B4AD1BBF0014C848E6A7F18 /* Debug */,
+				E71DD1C8720A4A5E8D09A1CD /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

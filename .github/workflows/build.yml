@@ -19,9 +19,9 @@ jobs:
       matrix:
         configuration: [Debug, Release]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install MacKernelSDK (pinned)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: acidanthera/MacKernelSDK
           ref: ${{ env.MACKERNELSDK_REF }}
@@ -43,12 +43,12 @@ jobs:
         run: |
           mkdir -p artifacts
           ditto -c -k --keepParent "build/products/$CONFIGURATION/itlwm.kext" "artifacts/itlwm-$CONFIGURATION.zip"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: itlwm-${{ matrix.configuration }}
           path: artifacts/*.zip
           if-no-files-found: error
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: build-logs-itlwm-${{ matrix.configuration }}
@@ -63,9 +63,9 @@ jobs:
         platform: [Sequoia, Tahoe]
         configuration: [Debug, Release]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install MacKernelSDK (pinned)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: acidanthera/MacKernelSDK
           ref: ${{ env.MACKERNELSDK_REF }}
@@ -89,12 +89,12 @@ jobs:
         run: |
           mkdir -p artifacts
           ditto -c -k --keepParent "build/products/$CONFIGURATION/$PLATFORM/AirportItlwm.kext" "artifacts/AirportItlwm-$PLATFORM-$CONFIGURATION.zip"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: AirportItlwm-${{ matrix.platform }}-${{ matrix.configuration }}
           path: artifacts/*.zip
           if-no-files-found: error
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: build-logs-${{ matrix.platform }}-${{ matrix.configuration }}

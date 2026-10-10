@@ -10835,14 +10835,7 @@ iwx_start(struct _ifnet *ifp)
 {
     struct iwx_softc *sc = (struct iwx_softc*)ifp->if_softc;
     ItlIwx *that = container_of(sc, ItlIwx, com);
-
-    IOReturn ret = that->getMainCommandGate()->runAction(
-        _iwx_start_task,
-        &that->com.sc_ic.ic_ac.ac_if
-    );
-
-    if (ret != kIOReturnSuccess)
-        XYLog("%s: iwx_start runAction ret=0x%x\n", DEVNAME(sc), ret);
+    that->getMainCommandGate()->attemptAction(_iwx_start_task, &that->com.sc_ic.ic_ac.ac_if);
 }
 
 void ItlIwx::

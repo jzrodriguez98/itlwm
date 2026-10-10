@@ -1055,6 +1055,10 @@ ieee80211_match_bss(struct ieee80211com *ic, struct ieee80211_node *ni,
     u_int8_t rate;
     int fail;
     
+#ifdef AIRPORT_WCL
+    if (!ic->ic_wcl_join_requested)
+        return IEEE80211_NODE_ASSOCFAIL_ESSID;
+#endif
     fail = 0;
     if ((ic->ic_flags & IEEE80211_F_BGSCAN) == 0 &&
         isclr(ic->ic_chan_active, ieee80211_chan2ieee(ic, ni->ni_chan)))
@@ -2786,50 +2790,64 @@ ieee80211_clear_vhtcaps(struct ieee80211_node *ni)
 }
 #endif
 
-void
+int
 ieee80211_setup_hecaps(struct ieee80211_node *ni, const uint8_t *data,
-                       uint8_t len)
+    uint8_t len)
 {
-    struct ieee80211_he_cap_elem *he_cap_ie_elem = (struct ieee80211_he_cap_elem *)data;
-    uint8_t mcs_nss_size, he_ppe_size, he_total_size;
-    
-    mcs_nss_size = ieee80211_he_mcs_nss_size(he_cap_ie_elem);
-    he_ppe_size =
-        ieee80211_he_ppe_size(data[sizeof(ni->ni_he_cap_elem) +
-                        mcs_nss_size],
-                      he_cap_ie_elem->phy_cap_info);
-    he_total_size = sizeof(ni->ni_he_cap_elem) + mcs_nss_size +
-            he_ppe_size;
-    
-    if (len < he_total_size)
-        return;
-    
-    memcpy(&ni->ni_he_cap_elem, data, sizeof(ni->ni_he_cap_elem));
-    
-    /* HE Tx/Rx HE MCS NSS Support Field */
-    memcpy(&ni->ni_he_mcs_nss_supp,
-           &data[sizeof(ni->ni_he_cap_elem)], mcs_nss_size);
-    
-    /* Check if there are (optional) PPE Thresholds */
-    if (ni->ni_he_cap_elem.phy_cap_info[6] &
-        IEEE80211_HE_PHY_CAP6_PPE_THRESHOLD_PRESENT)
-        memcpy(ni->ni_ppe_thres,
-               &data[sizeof(ni->ni_he_cap_elem) + mcs_nss_size],
-               he_ppe_size);
+    ni->ni_flags &= ~IEEE80211_NODE_HECAP;
+    memset(&ni->ni_he_cap_elem, 0, sizeof(ni->ni_he_cap_elem));
+    memset(&ni->ni_he_mcs_nss_supp, 0xff, sizeof(ni->ni_he_mcs_nss_supp));
+    memset(ni->ni_ppe_thres, 0, sizeof(ni->ni_ppe_thres));
+    if (len < sizeof(ni->ni_he_cap_elem))
+        return 0;
+    const struct ieee80211_he_cap_elem *cap =
+        (const struct ieee80211_he_cap_elem *)data;
+    unsigned mcs_size = ieee80211_he_mcs_nss_size(cap);
+    unsigned fixed = sizeof(*cap) + mcs_size;
+    if (len < fixed)
+        return 0;
+    unsigned ppe_size = 0;
+    if (cap->phy_cap_info[6] & IEEE80211_HE_PHY_CAP6_PPE_THRESHOLD_PRESENT) {
+        if (len == fixed)
+            return 0;
+        ppe_size = ieee80211_he_ppe_size(data[fixed], cap->phy_cap_info);
+        if (ppe_size > sizeof(ni->ni_ppe_thres) || len < fixed + ppe_size)
+            return 0;
+    }
+    memcpy(&ni->ni_he_cap_elem, cap, sizeof(*cap));
+    const uint8_t *mcs = data + sizeof(*cap);
+    memcpy(&ni->ni_he_mcs_nss_supp.rx_mcs_80, mcs, 4);
+    mcs += 4;
+    if (cap->phy_cap_info[0] & IEEE80211_HE_PHY_CAP0_CHANNEL_WIDTH_SET_160MHZ_IN_5G) {
+        memcpy(&ni->ni_he_mcs_nss_supp.rx_mcs_160, mcs, 4);
+        mcs += 4;
+    }
+    if (cap->phy_cap_info[0] & IEEE80211_HE_PHY_CAP0_CHANNEL_WIDTH_SET_80PLUS80_MHZ_IN_5G)
+        memcpy(&ni->ni_he_mcs_nss_supp.rx_mcs_80p80, mcs, 4);
+    memcpy(ni->ni_ppe_thres, data + fixed, ppe_size);
+    ni->ni_flags |= IEEE80211_NODE_HECAP;
+    return 1;
 }
 
 int
-ieee80211_setup_heop(struct ieee80211_node *ni, const uint8_t *data,
-                     uint8_t len)
+ieee80211_setup_heop(struct ieee80211_node *ni, const uint8_t *data, uint8_t len)
 {
-    struct ieee80211_he_operation *he_op_ie = (struct ieee80211_he_operation *)data;
-    
-    ni->ni_he_oper_params = le32toh(he_op_ie->he_oper_params);
-    ni->ni_he_oper_nss_set = le16toh(he_op_ie->he_mcs_nss_set);
-    bzero(&ni->ni_he_optional, sizeof(ni->ni_he_optional));
-    if (len > __offsetof(struct ieee80211_he_operation, optional)) {
-        memcpy(ni->ni_he_optional, he_op_ie->optional, min(sizeof(ni->ni_he_optional), len - __offsetof(struct ieee80211_he_operation, optional)));
-    }
+    ni->ni_flags &= ~IEEE80211_NODE_HEOP;
+    ni->ni_he_oper_params = 0;
+    ni->ni_he_oper_nss_set = 0xffff;
+    memset(ni->ni_he_optional, 0, sizeof(ni->ni_he_optional));
+    if (len < sizeof(struct ieee80211_he_operation))
+        return 0;
+    /* The size helper includes the extension ID; len excludes it. */
+    unsigned size = ieee80211_he_oper_size(data) - 1;
+    if (len < size)
+        return 0;
+    const struct ieee80211_he_operation *op =
+        (const struct ieee80211_he_operation *)data;
+    ni->ni_he_oper_params = le32toh(op->he_oper_params);
+    ni->ni_he_oper_nss_set = le16toh(op->he_mcs_nss_set);
+    memcpy(ni->ni_he_optional, op->optional, size - sizeof(*op));
+    ni->ni_flags |= IEEE80211_NODE_HEOP;
     return 1;
 }
 

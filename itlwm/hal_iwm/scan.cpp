@@ -121,6 +121,9 @@
 
 #include "ItlIwm.hpp"
 #include "rs.h"
+#ifdef AIRPORT_WCL
+#include "../../AirportItlwm/WCL/WCL.hpp"
+#endif
 
 uint16_t ItlIwm::
 iwm_scan_rx_chain(struct iwm_softc *sc)
@@ -173,12 +176,23 @@ iwm_lmac_scan_fill_channels(struct iwm_softc *sc,
          c++) {
         if (c->ic_flags == 0)
             continue;
+#ifdef AIRPORT_WCL
+        if (!AirportWCL::scanChannelSelected(ic->ic_wcl_scan_channels,
+                ic->ic_wcl_scan_requested && ic->ic_wcl_scan_restricted,
+                ieee80211_chan2ieee(ic, c)))
+            continue;
+#endif
         
         chan->channel_num = htole16(ieee80211_mhz2ieee(c->ic_freq, 0));
         chan->iter_count = htole16(1);
         chan->iter_interval = 0;
         chan->flags = htole32(IWM_UNIFIED_SCAN_CHANNEL_PARTIAL);
+#ifdef AIRPORT_WCL
+        if (AirportWCL::probeChannel(n_ssids != 0,
+                c->ic_flags & IEEE80211_CHAN_PASSIVE, c->ic_flags & IEEE80211_CHAN_DFS))
+#else
         if (n_ssids != 0 && !bgscan)
+#endif
             chan->flags |= htole32(1 << 1); /* select SSID 0 */
         chan++;
         nchan++;
@@ -201,11 +215,22 @@ iwm_umac_scan_fill_channels(struct iwm_softc *sc,
          c++) {
         if (c->ic_flags == 0)
             continue;
+#ifdef AIRPORT_WCL
+        if (!AirportWCL::scanChannelSelected(ic->ic_wcl_scan_channels,
+                ic->ic_wcl_scan_requested && ic->ic_wcl_scan_restricted,
+                ieee80211_chan2ieee(ic, c)))
+            continue;
+#endif
         
         chan->channel_num = ieee80211_mhz2ieee(c->ic_freq, 0);
         chan->iter_count = 1;
         chan->iter_interval = htole16(0);
+#ifdef AIRPORT_WCL
+        if (AirportWCL::probeChannel(n_ssids != 0,
+                c->ic_flags & IEEE80211_CHAN_PASSIVE, c->ic_flags & IEEE80211_CHAN_DFS))
+#else
         if (n_ssids != 0 && !bgscan)
+#endif
             chan->flags = htole32(1 << 0); /* select SSID 0 */
         chan++;
         nchan++;
@@ -338,6 +363,18 @@ int ItlIwm::
 iwm_lmac_scan(struct iwm_softc *sc, int bgscan)
 {
     struct ieee80211com *ic = &sc->sc_ic;
+    int scanSSIDLength = ic->ic_des_esslen;
+    const uint8_t *scanSSID = ic->ic_des_essid;
+    bool scanActive = scanSSIDLength != 0;
+#ifdef AIRPORT_WCL
+    scanActive = AirportWCL::scanUsesProbes(ic->ic_wcl_scan_requested,
+        ic->ic_wcl_scan_active);
+    if (ic->ic_wcl_scan_requested) {
+        scanSSIDLength = ic->ic_wcl_scan_ssid_length;
+        scanSSID = ic->ic_wcl_scan_ssid;
+    }
+#endif
+
     struct iwm_host_cmd hcmd = {
         .id = IWM_SCAN_OFFLOAD_REQUEST_CMD,
         .len = { 0, },
@@ -383,9 +420,13 @@ iwm_lmac_scan(struct iwm_softc *sc, int bgscan)
     req->scan_flags = htole32(IWM_LMAC_SCAN_FLAG_PASS_ALL |
                               IWM_LMAC_SCAN_FLAG_ITER_COMPLETE |
                               IWM_LMAC_SCAN_FLAG_EXTENDED_DWELL);
-    if (ic->ic_des_esslen == 0)
+#ifdef AIRPORT_WCL
+    if (scanActive && scanSSIDLength == 0)
+        req->scan_flags &= ~htole32(IWM_LMAC_SCAN_FLAG_EXTENDED_DWELL);
+#endif
+    if (!scanActive)
         req->scan_flags |= htole32(IWM_LMAC_SCAN_FLAG_PASSIVE);
-    else
+    else if (scanSSIDLength != 0)
         req->scan_flags |=
         htole32(IWM_LMAC_SCAN_FLAG_PRE_CONNECTION);
     if (isset(sc->sc_enabled_capa,
@@ -414,17 +455,17 @@ iwm_lmac_scan(struct iwm_softc *sc, int bgscan)
     iwm_scan_rate_n_flags(sc, IEEE80211_CHAN_5GHZ, 1/*XXX*/);
     req->tx_cmd[1].sta_id = IWM_AUX_STA_ID;
     
-    /* Check if we're doing an active directed scan. */
-    if (ic->ic_des_esslen != 0) {
+    /* An empty SSID in an active request is a wildcard probe. */
+    if (scanActive) {
         req->direct_scan[0].id = IEEE80211_ELEMID_SSID;
-        req->direct_scan[0].len = ic->ic_des_esslen;
-        memcpy(req->direct_scan[0].ssid, ic->ic_des_essid,
-               ic->ic_des_esslen);
+        req->direct_scan[0].len = scanSSIDLength;
+        memcpy(req->direct_scan[0].ssid, scanSSID,
+               scanSSIDLength);
     }
     
     req->n_channels = iwm_lmac_scan_fill_channels(sc,
                                                   (struct iwm_scan_channel_cfg_lmac *)req->data,
-                                                  ic->ic_des_esslen != 0, bgscan);
+                                                  scanActive, bgscan);
     
     preq = (struct iwm_scan_probe_req_v1 *)(req->data +
                                             (sizeof(struct iwm_scan_channel_cfg_lmac) *
@@ -582,6 +623,18 @@ iwm_umac_scan(struct iwm_softc *sc, int bgscan)
 {
     XYLog("%s\n", __FUNCTION__);
     struct ieee80211com *ic = &sc->sc_ic;
+    int scanSSIDLength = ic->ic_des_esslen;
+    const uint8_t *scanSSID = ic->ic_des_essid;
+    bool scanActive = scanSSIDLength != 0;
+#ifdef AIRPORT_WCL
+    scanActive = AirportWCL::scanUsesProbes(ic->ic_wcl_scan_requested,
+        ic->ic_wcl_scan_active);
+    if (ic->ic_wcl_scan_requested) {
+        scanSSIDLength = ic->ic_wcl_scan_ssid_length;
+        scanSSID = ic->ic_wcl_scan_ssid;
+    }
+#endif
+
     struct iwm_host_cmd hcmd = {
         .id = iwm_cmd_id(IWM_SCAN_REQ_UMAC, IWM_LONG_GROUP, 0),
         .len = { 0, },
@@ -616,7 +669,7 @@ iwm_umac_scan(struct iwm_softc *sc, int bgscan)
         req->v7.adwell_default_n_aps =
         IWM_SCAN_ADWELL_DEFAULT_LB_N_APS;
         
-        if (ic->ic_des_esslen != 0)
+        if (scanSSIDLength != 0)
             req->v7.adwell_max_budget =
             htole16(IWM_SCAN_ADWELL_MAX_BUDGET_DIRECTED_SCAN);
         else
@@ -668,7 +721,7 @@ iwm_umac_scan(struct iwm_softc *sc, int bgscan)
     chanparam = iwm_get_scan_req_umac_chan_param(sc, req);
     chanparam->count = iwm_umac_scan_fill_channels(sc,
                                                    (struct iwm_scan_channel_cfg_umac *)cmd_data,
-                                                   ic->ic_des_esslen != 0, bgscan);
+                                                   scanActive, bgscan);
     chanparam->flags = 0;
     
     tail_data = (uint8_t*)cmd_data + sizeof(struct iwm_scan_channel_cfg_umac) *
@@ -684,21 +737,21 @@ iwm_umac_scan(struct iwm_softc *sc, int bgscan)
         IWM_UMAC_SCAN_GEN_FLAGS2_ALLOW_CHNL_REORDER;
     }
     
-    /* Check if we're doing an active directed scan. */
-    if (ic->ic_des_esslen != 0) {
+    /* An empty SSID in an active request is a wildcard probe. */
+    if (scanActive) {
         if (isset(sc->sc_ucode_api, IWM_UCODE_TLV_API_SCAN_EXT_CHAN_VER)) {
             tail->direct_scan[0].id = IEEE80211_ELEMID_SSID;
-            tail->direct_scan[0].len = ic->ic_des_esslen;
-            memcpy(tail->direct_scan[0].ssid, ic->ic_des_essid,
-                   ic->ic_des_esslen);
+            tail->direct_scan[0].len = scanSSIDLength;
+            memcpy(tail->direct_scan[0].ssid, scanSSID,
+                   scanSSIDLength);
         } else {
             tailv1->direct_scan[0].id = IEEE80211_ELEMID_SSID;
-            tailv1->direct_scan[0].len = ic->ic_des_esslen;
-            memcpy(tailv1->direct_scan[0].ssid, ic->ic_des_essid,
-                   ic->ic_des_esslen);
+            tailv1->direct_scan[0].len = scanSSIDLength;
+            memcpy(tailv1->direct_scan[0].ssid, scanSSID,
+                   scanSSIDLength);
         }
-        req->general_flags |=
-        htole32(IWM_UMAC_SCAN_GEN_FLAGS_PRE_CONNECT);
+        if (scanSSIDLength != 0)
+            req->general_flags |= htole32(IWM_UMAC_SCAN_GEN_FLAGS_PRE_CONNECT);
     } else
         req->general_flags |= htole32(IWM_UMAC_SCAN_GEN_FLAGS_PASSIVE);
     

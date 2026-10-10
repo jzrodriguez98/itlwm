@@ -6,6 +6,13 @@
 //  Copyright © 2023 钟先耀. All rights reserved.
 //
 
+#ifdef AIRPORT_WCL
+#if __IO80211_TARGET == __MAC_15_2
+#include "macOS15/IO80211ControllerV2.h"
+#else
+#include "macOS26/IO80211ControllerV2.h"
+#endif
+#else
 #ifndef _IO80211CONTROLLER_H
 #define _IO80211CONTROLLER_H
 
@@ -259,3 +266,5 @@ protected:
 #endif /* defined(KERNEL) && defined(__cplusplus) */
 
 #endif /* !_IO80211CONTROLLER_H */
+
+#endif

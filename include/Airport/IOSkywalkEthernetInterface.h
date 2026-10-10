@@ -1,3 +1,10 @@
+#ifdef AIRPORT_WCL
+#if __IO80211_TARGET == __MAC_15_2
+#include "macOS15/IOSkywalkEthernetInterface.h"
+#else
+#include "macOS26/IOSkywalkEthernetInterface.h"
+#endif
+#else
 #ifndef IOSkywalkEthernetInterface_h
 #define IOSkywalkEthernetInterface_h
 
@@ -77,3 +84,5 @@ static_assert(__offsetof(IOSkywalkEthernetInterface, mExpansionData2) == 0x108, 
 static_assert(sizeof(IOSkywalkEthernetInterface) == 0x110, "Invalid class size");
 
 #endif /* IOSkywalkEthernetInterface_h */
+
+#endif

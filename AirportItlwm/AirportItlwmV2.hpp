@@ -10,6 +10,13 @@
 #define AirportItlwmV2_hpp
 
 #include "Apple80211.h"
+#ifdef AIRPORT_WCL
+#if __IO80211_TARGET == __MAC_15_2
+#include <Airport/macOS15/FaultReporter.h>
+#else
+#include <Airport/macOS26/FaultReporter.h>
+#endif
+#endif
 
 #include "IOKit/network/IOGatedOutputQueue.h"
 #include <libkern/c++/OSString.h>
@@ -34,6 +41,11 @@ enum
 };
 
 #define kWatchDogTimerPeriod 1000
+#ifdef AIRPORT_WCL
+#define AIRPORT_LEGACY_OVERRIDE
+#else
+#define AIRPORT_LEGACY_OVERRIDE override
+#endif
 
 extern "C" {
 const char *convertApple80211IOCTLToString(signed int cmd);
@@ -70,8 +82,8 @@ public:
     virtual IOService* probe(IOService* provider, SInt32* score) override;
     virtual bool start(IOService *provider) override;
     virtual void stop(IOService *provider) override;
-    virtual IOReturn enable(IO80211SkywalkInterface *netif) override;
-    virtual IOReturn disable(IO80211SkywalkInterface *netif) override;
+    virtual IOReturn enable(IO80211SkywalkInterface *netif) AIRPORT_LEGACY_OVERRIDE;
+    virtual IOReturn disable(IO80211SkywalkInterface *netif) AIRPORT_LEGACY_OVERRIDE;
     virtual IOReturn setHardwareAddress(const void *addr, UInt32 addrBytes) override;
     virtual IOReturn getHardwareAddress(IOEthernetAddress* addrP) override;
     virtual IOReturn getPacketFilters(const OSSymbol *group, UInt32 *filters) const override;
@@ -106,7 +118,13 @@ public:
     void disableAdapter(IONetworkInterface *netif);
     bool initCCLogs();
     
+    #ifdef AIRPORT_WCL
+    virtual IO80211WorkQueue *getWorkQueue() const override;
+    virtual CCLogStream *getLogger() const override { return driverLogger; }
+    CCLogStream *driverLogger;
+#else
     virtual IO80211WorkQueue *getWorkQueue() override;
+#endif
     virtual bool requiresExplicitMBufRelease() override {
         return false;
     }
@@ -123,11 +141,15 @@ public:
     
     virtual bool getLogPipes(CCPipe**, CCPipe**, CCPipe**) override;
     
+#ifdef AIRPORT_WCL
+    virtual CommonFaultReporter *getFaultReporterFromDriver() override;
+#else
     virtual void *getFaultReporterFromDriver() override;
+#endif
     
-    virtual SInt32 apple80211_ioctl(IO80211SkywalkInterface *,unsigned long,void *, bool, bool) override;
-    virtual SInt32 apple80211SkywalkRequest(UInt,int,IO80211SkywalkInterface *,void *) override;
-    virtual SInt32 apple80211SkywalkRequest(UInt,int,IO80211SkywalkInterface *,void *,void *) override;
+    virtual SInt32 apple80211_ioctl(IO80211SkywalkInterface *,unsigned long,void *, bool, bool) AIRPORT_LEGACY_OVERRIDE;
+    virtual SInt32 apple80211SkywalkRequest(UInt,int,IO80211SkywalkInterface *,void *) AIRPORT_LEGACY_OVERRIDE;
+    virtual SInt32 apple80211SkywalkRequest(UInt,int,IO80211SkywalkInterface *,void *,void *) AIRPORT_LEGACY_OVERRIDE;
 
     bool createMediumTables(const IONetworkMedium **primary);
     void releaseAll();
@@ -203,7 +225,11 @@ public:
     IOPCIDevice *pciNub;
     IONetworkStats *fpNetStats;
     AirportItlwmEthernetInterface *bsdInterface;
+    #ifdef AIRPORT_WCL
+    IO80211InfraInterface *fNetIf;
+#else
     IO80211SkywalkInterface *fNetIf;
+#endif
     IOWorkLoop *fWatchdogWorkLoop;
     ItlHalService *fHalService;
     
@@ -249,7 +275,16 @@ public:
     CCPipe *driverDataPathPipe;
     CCPipe *driverSnapshotsPipe;
     
+#ifdef AIRPORT_WCL
+    bool driverLogPipeStarted = false;
+    bool driverDataPathPipeStarted = false;
+    bool driverSnapshotsPipeStarted = false;
+    CCStream *driverFaultStream;
+    CCFaultReporter *driverCoreFaultReporter;
+    IO80211FaultReporter *driverFaultReporter;
+#else
     CCStream *driverFaultReporter;
+#endif
 };
 
 #endif /* AirportItlwmV2_hpp */

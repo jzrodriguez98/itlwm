@@ -10,6 +10,10 @@
 
 #include <sys/_if_ether.h>
 #include <net80211/ieee80211_var.h>
+#ifdef AIRPORT_WCL
+#include <IOKit/IOCommandGate.h>
+extern IOCommandGate *_fCommandGate;
+#endif
 
 #define super IOEthernetInterface
 OSDefineMetaClassAndStructors(AirportItlwmEthernetInterface, IOEthernetInterface);
@@ -24,11 +28,29 @@ initWithSkywalkInterfaceAndProvider(IONetworkController *controller, IO80211Skyw
     return ret;
 }
 
+#ifdef AIRPORT_WCL
+IOReturn AirportItlwmEthernetInterface::prepareBSDGated(OSObject *, void *arg0, void *, void *, void *)
+{
+    auto self = static_cast<AirportItlwmEthernetInterface *>(arg0);
+    auto controller = OSDynamicCast(IO80211Controller, self->getController());
+    auto queue = controller ? controller->getWorkQueue() : nullptr;
+    if (!queue || !queue->inGate() || queue->onThread()) {
+        return kIOReturnNotPermitted;
+    }
+    return self->interface->prepareBSDInterface(self->getIfnet(), 0);
+}
+#endif
+
 IOReturn AirportItlwmEthernetInterface::
 attachToDataLinkLayer( IOOptionBits options, void *parameter )
 {
     XYLog("%s\n", __FUNCTION__);
     char infName[IFNAMSIZ];
+#ifdef AIRPORT_WCL
+    if (!setInterfaceSubType(3)) {
+        return kIOReturnNotReady;
+    }
+#endif
     IOReturn ret = super::attachToDataLinkLayer(options, parameter);
     if (ret == kIOReturnSuccess && interface) {
         UInt8 builtIn = 0;
@@ -41,11 +63,26 @@ attachToDataLinkLayer( IOOptionBits options, void *parameter )
         if (OSDynamicCast(IOEthernetController, getController())->getHardwareAddress(&addr) == kIOReturnSuccess)
             setProperty(kIOMACAddress,  (void *) &addr,
                         kIOEthernetAddressSize);
+#ifdef AIRPORT_WCL
+        ret = _fCommandGate ? _fCommandGate->runAction(prepareBSDGated, this) : kIOReturnNotReady;
+        if (ret != kIOReturnSuccess) {
+            super::detachFromDataLinkLayer(options, parameter);
+            isAttach = false;
+            return ret;
+        }
+        isAttach = true;
+        interface->registerService();
+#else
         interface->registerService();
         interface->prepareBSDInterface(getIfnet(), 0);
+#endif
 //        ret = bpf_attach(getIfnet(), DLT_RAW, 0x48, &AirportItlwmEthernetInterface::bpfOutputPacket, &AirportItlwmEthernetInterface::bpfTap);
     }
+#ifdef AIRPORT_WCL
+    isAttach = ret == kIOReturnSuccess;
+#else
     isAttach = true;
+#endif
     return ret;
 }
 
@@ -96,15 +133,22 @@ extern const char* hexdump(uint8_t *buf, size_t len);
 UInt32 AirportItlwmEthernetInterface::
 inputPacket(mbuf_t packet, UInt32 length, IOOptionBits options, void *param)
 {
+#ifdef AIRPORT_WCL
+    if (!packet)
+        return 0;
+#endif
+#ifndef AIRPORT_WCL
     ether_header_t *eh;
     size_t len = mbuf_len(packet);
     
     eh = (ether_header_t *)mbuf_data(packet);
+
     if (len >= sizeof(ether_header_t) && eh->ether_type == htons(ETHERTYPE_PAE)) { // EAPOL packet
         const char* dump = hexdump((uint8_t*)mbuf_data(packet), len);
         XYLog("input EAPOL packet, len: %zu, data: %s\n", len, dump ? dump : "Failed to allocate memory");
         if (dump)
             IOFree((void*)dump, 3 * len + 1);
     }
+#endif
     return IOEthernetInterface::inputPacket(packet, length, options, param);
 }

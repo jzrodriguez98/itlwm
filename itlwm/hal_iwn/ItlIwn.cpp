@@ -34,6 +34,9 @@
  * adapters.
  */
 
+#ifdef AIRPORT_WCL
+#include "../../AirportItlwm/WCL/WCL.hpp"
+#endif
 #include "ItlIwn.hpp"
 #include <linux/types.h>
 #include <linux/kernel.h>
@@ -77,6 +80,11 @@ bool ItlIwn::attach(IOPCIDevice *device)
 {
     pci.pa_tag = device;
     pci.workloop = getMainWorkLoop();
+#ifdef AIRPORT_VTD
+    if (!prepareDma(device, 36))
+        return false;
+    pci.pa_dmat = dmaArena;
+#endif
     if (!iwn_attach(&com, &pci)) {
         detach(device);
         releaseAll();
@@ -88,8 +96,31 @@ bool ItlIwn::attach(IOPCIDevice *device)
 void ItlIwn::
 detach(IOPCIDevice *device)
 {
+#ifdef AIRPORT_VTD
+    getMainCommandGate()->runAction(
+        [](OSObject *, void *arg0, void *arg1, void *, void *) -> IOReturn {
+            auto that = static_cast<ItlIwn *>(arg0);
+            auto pci = static_cast<IOPCIDevice *>(arg1);
+            that->dmaDetaching = true;
+            that->dmaEpoch++;
+            that->com.sc_ic.ic_ac.ac_if.if_flags &= ~(IFF_UP | IFF_RUNNING);
+            that->com.sc_ic.ic_state = IEEE80211_S_INIT;
+            timeout_del(&that->com.sc_ic.ic_bgscan_timeout);
+            pci->setBusMasterEnable(false);
+            auto intr = that->com.ih;
+            if (intr && intr->intr)
+                intr->intr->disable();
+            for (unsigned int i = 0; i < nitems(that->com.txq); i++)
+                that->iwn_reset_tx_ring(&that->com, &that->com.txq[i]);
+            return kIOReturnSuccess;
+        }, this, device);
+#endif
     struct _ifnet *ifp = &com.sc_ic.ic_ac.ac_if;
     struct iwn_softc *sc = &com;
+#ifdef AIRPORT_VTD
+    releaseAll();
+    taskq_destroy(systq);
+#endif
     
     for (int txq_i = 0; txq_i < nitems(sc->txq); txq_i++)
         iwn_free_tx_ring(sc, &sc->txq[txq_i]);
@@ -99,7 +130,9 @@ detach(IOPCIDevice *device)
     iwn_free_kw(sc);
     iwn_free_fwmem(sc);
     ieee80211_ifdetach(ifp);
+#ifndef AIRPORT_VTD
     taskq_destroy(systq);
+#endif
     releaseAll();
 }
 
@@ -831,7 +864,19 @@ iwn_init_task(void *arg1)
     s = splnet();
 
     if ((ifp->if_flags & (IFF_UP | IFF_RUNNING)) == IFF_UP)
+#ifdef AIRPORT_WCL
+    {
+        int error = that->iwn_init(ifp);
+        if (error && !(ifp->if_flags & IFF_RUNNING)) {
+            sc->sc_ic.ic_wcl_mac_reconfig = false;
+            ifp->if_flags &= ~IFF_UP;
+            if (sc->sc_ic.ic_event_handler)
+                sc->sc_ic.ic_event_handler(&sc->sc_ic, IEEE80211_EVT_DRIVER_STOPPED, NULL);
+        }
+    }
+#else
         that->iwn_init(ifp);
+#endif
 
     splx(s);
 //    rw_exit_write(&sc->sc_rwlock);
@@ -1074,8 +1119,17 @@ iwn_read_prom_data(struct iwn_softc *sc, uint32_t addr, void *data, int count)
     return 0;
 }
 
-bool allocDmaMemory2(struct iwn_dma_info *dma, size_t size, int alignment)
+bool allocDmaMemory2(bus_dma_tag_t tag, struct iwn_dma_info *dma, size_t size, int alignment)
 {
+#ifdef AIRPORT_VTD
+    if (!tag || !dma || size > UINT32_MAX || alignment < 0 ||
+        !tag->allocate(static_cast<uint32_t>(size), alignment, dma->mapping))
+        return false;
+    dma->vaddr = dma->mapping.vaddr;
+    dma->paddr = dma->mapping.address;
+    dma->size = static_cast<bus_size_t>(size);
+    return true;
+#else
     IOBufferMemoryDescriptor *bmd;
     IODMACommand::Segment64 seg;
     UInt64 ofs = 0;
@@ -1115,13 +1169,14 @@ bool allocDmaMemory2(struct iwn_dma_info *dma, size_t size, int alignment)
     dma->cmd = cmd;
     memset(dma->vaddr, 0, dma->size);
     return true;
+#endif
 }
 
 int ItlIwn::
 iwn_dma_contig_alloc(bus_dma_tag_t tag, struct iwn_dma_info *dma,
                      void** kvap, bus_size_t size, bus_size_t alignment)
 {
-    if (!allocDmaMemory2(dma, size, alignment)) {
+    if (!allocDmaMemory2(tag, dma, size, alignment)) {
         return 1;
     }
     
@@ -1134,6 +1189,16 @@ iwn_dma_contig_alloc(bus_dma_tag_t tag, struct iwn_dma_info *dma,
 void ItlIwn::
 iwn_dma_contig_free(struct iwn_dma_info *dma)
 {
+#ifdef AIRPORT_VTD
+    if (!dma)
+        return;
+    if (dma->mapping.arena)
+        dma->mapping.arena->deallocate(dma->mapping);
+    dma->vaddr = nullptr;
+    dma->paddr = 0;
+    dma->size = 0;
+    return;
+#endif
     if (dma == NULL || dma->cmd == NULL)
         return;
     if (dma->vaddr == NULL)
@@ -1252,7 +1317,7 @@ iwn_alloc_rx_ring(struct iwn_softc *sc, struct iwn_rx_ring *ring)
             error = ENOBUFS;
             goto fail;
         }
-        data->map->dm_nsegs = data->map->cursor->getPhysicalSegments(m, &data->map->dm_segs[0], 1);
+        data->map->dm_nsegs = bus_dmamap_packet(data->map, m, &data->map->dm_segs[0], 1, true);
         if (data->map->dm_nsegs == 0) {
             mbuf_freem(m);
             error = ENOMEM;
@@ -1396,6 +1461,12 @@ iwn_reset_tx_ring(struct iwn_softc *sc, struct iwn_tx_ring *ring)
     for (i = 0; i < IWN_TX_RING_COUNT; i++) {
         struct iwn_tx_data *data = &ring->data[i];
 
+#ifdef AIRPORT_VTD
+        data->commandPending = false;
+        data->commandWaiting = false;
+        if (ring->desc)
+            getMainCommandGate()->commandWakeup(&ring->desc[i]);
+#endif
         if (data->m != NULL) {
 //            bus_dmamap_sync(sc->sc_dmat, data->map, 0,
 //                data->map->dm_mapsize, BUS_DMASYNC_POSTWRITE);
@@ -1405,7 +1476,8 @@ iwn_reset_tx_ring(struct iwn_softc *sc, struct iwn_tx_ring *ring)
         }
     }
     /* Clear TX descriptors. */
-    memset(ring->desc, 0, ring->desc_dma.size);
+    if (ring->desc)
+        memset(ring->desc, 0, ring->desc_dma.size);
 //    bus_dmamap_sync(sc->sc_dmat, ring->desc_dma.map, 0,
 //        ring->desc_dma.size, BUS_DMASYNC_PREWRITE);
     sc->qfullmsk &= ~(1 << ring->qid);
@@ -2141,7 +2213,7 @@ iwn_rx_done(struct iwn_softc *sc, struct iwn_rx_desc *desc,
         ifp->netStat->inputErrors++;
         return;
     }
-    data->map->dm_nsegs = data->map->cursor->getPhysicalSegments(m1, &data->map->dm_segs[0], 1);
+    data->map->dm_nsegs = bus_dmamap_packet(data->map, m1, &data->map->dm_segs[0], 1, true);
     if (data->map->dm_nsegs == 0) {
         XYLog("could not map RX mbuf\n");
         mbuf_freem(m1);
@@ -2930,6 +3002,12 @@ iwn_cmd_done(struct iwn_softc *sc, struct iwn_rx_desc *desc)
         return;    /* Not a command ack. */
 
     data = &ring->data[desc->idx];
+#ifdef AIRPORT_VTD
+    if (!data->commandPending)
+        return;
+    data->commandPending = false;
+#endif
+
 
     /* If the command was mapped in an mbuf, free it. */
     if (data->m != NULL) {
@@ -2939,7 +3017,11 @@ iwn_cmd_done(struct iwn_softc *sc, struct iwn_rx_desc *desc)
         mbuf_freem(data->m);
         data->m = NULL;
     }
+#ifdef AIRPORT_VTD
+    getMainCommandGate()->commandWakeup(&ring->desc[desc->idx]);
+#else
     wakeupOn(&ring->desc[desc->idx]);
+#endif
 }
 
 /*
@@ -2964,6 +3046,11 @@ iwn_notif_intr(struct iwn_softc *sc)
 
         bus_dmamap_sync(sc->sc_dmat, data->map, 0, sizeof (*desc),
             BUS_DMASYNC_POSTREAD);
+        if (!bus_dmamap_read(data->map, data->m, IWN_RBUF_SIZE)) {
+            ifp->netStat->inputErrors++;
+            sc->rxq.cur = (sc->rxq.cur + 1) % IWN_RX_RING_COUNT;
+            continue;
+        }
         desc = mtod(data->m, struct iwn_rx_desc *);
 
         DPRINTFN(4, ("notification qid=%d idx=%d flags=%x type=%d\n",
@@ -3473,7 +3560,19 @@ iwn_tx(struct iwn_softc *sc, mbuf_t m, struct ieee80211_node *ni)
         qid = ac;
     }
 
+#ifdef AIRPORT_VTD
+    if (dmaDetaching || qid < 0 || qid >= nitems(sc->txq)) {
+        mbuf_freem(m);
+        return ENXIO;
+    }
+#endif
     ring = &sc->txq[qid];
+#ifdef AIRPORT_VTD
+    if (!ring->desc || ring->data[ring->cur].m || ring->queued >= IWN_TX_RING_COUNT - 1) {
+        mbuf_freem(m);
+        return ENOBUFS;
+    }
+#endif
     desc = &ring->desc[ring->cur];
     data = &ring->data[ring->cur];
 
@@ -3705,7 +3804,7 @@ iwn_tx(struct iwn_softc *sc, mbuf_t m, struct ieee80211_node *ni)
     }
     tx->flags = htole32(flags);
 
-    nsegs = data->map->cursor->getPhysicalSegmentsWithCoalesce(m, &segs[0], IWN_MAX_SCATTER - 1);
+    nsegs = bus_dmamap_packet(data->map, m, &segs[0], IWN_MAX_SCATTER - 1, false);
     if (nsegs == 0) {
         XYLog("%s: can't map mbuf (error %d)\n", DEVNAME(sc),
               nsegs);
@@ -3920,6 +4019,18 @@ iwn_ioctl(struct _ifnet *ifp, u_long cmd, caddr_t data)
 int ItlIwn::
 iwn_cmd(struct iwn_softc *sc, int code, const void *buf, int size, int async)
 {
+#ifdef AIRPORT_VTD
+    if (!getMainWorkLoop()->inGate()) {
+        struct Request { iwn_softc *sc; int code; const void *buf; int size; int async; } request = {sc, code, buf, size, async};
+        return getMainCommandGate()->runAction(
+            [](OSObject *, void *arg0, void *arg1, void *, void *) -> IOReturn {
+                auto request = static_cast<Request *>(arg1);
+                return static_cast<ItlIwn *>(arg0)->iwn_cmd(request->sc, request->code,
+                    request->buf, request->size, request->async);
+            }, this, &request);
+    }
+    uint64_t epoch = dmaEpoch;
+#endif
     DPRINTFN(2, ("%s code=%d size=%d\n", __FUNCTION__, code, size));
     struct iwn_ops *ops = &sc->ops;
     struct iwn_tx_ring *ring = &sc->txq[4];
@@ -3932,6 +4043,14 @@ iwn_cmd(struct iwn_softc *sc, int code, const void *buf, int size, int async)
     unsigned int max_chunks = 1;
     IOPhysicalSegment seg;
 
+#ifdef AIRPORT_VTD
+    if (dmaDetaching)
+        return ENXIO;
+    if (!ring->desc || size < 0 || size > MCLBYTES - 4 || (size && !buf))
+        return EINVAL;
+    if (ring->data[ring->cur].commandPending || ring->data[ring->cur].commandWaiting)
+        return ENOSPC;
+#endif
     desc = &ring->desc[ring->cur];
     data = &ring->data[ring->cur];
     totlen = 4 + size;
@@ -3964,7 +4083,7 @@ iwn_cmd(struct iwn_softc *sc, int code, const void *buf, int size, int async)
 //            mbuf_freem(m);
 //            return error;
 //        }
-        data->map->dm_nsegs = data->map->cursor->getPhysicalSegmentsWithCoalesce(m, &seg, 1);
+        data->map->dm_nsegs = bus_dmamap_packet(data->map, m, &seg, 1, false);
         if (data->map->dm_nsegs == 0) {
             XYLog("%s: could not load fw cmd mbuf (%zd bytes)\n",
                   DEVNAME(sc), totlen);
@@ -3983,6 +4102,12 @@ iwn_cmd(struct iwn_softc *sc, int code, const void *buf, int size, int async)
     cmd->qid = ring->qid;
     cmd->idx = ring->cur;
     memcpy(cmd->data, buf, size);
+    if (size > sizeof(cmd->data) && !bus_dmamap_write(data->map, data->m)) {
+        mbuf_freem(data->m);
+        data->m = nullptr;
+        return EIO;
+    }
+
 
     desc->nsegs = 1;
     desc->segs[0].addr = htole32(IWN_LOADDR(paddr));
@@ -4004,10 +4129,33 @@ iwn_cmd(struct iwn_softc *sc, int code, const void *buf, int size, int async)
     ops->update_sched(sc, ring->qid, ring->cur, 0, 0);
 
     /* Kick command ring. */
+#ifdef AIRPORT_VTD
+    data->commandPending = true;
+    data->commandWaiting = !async;
+#endif
     ring->cur = (ring->cur + 1) % IWN_TX_RING_COUNT;
     IWN_WRITE(sc, IWN_HBUS_TARG_WRPTR, ring->qid << 8 | ring->cur);
 
+#ifdef AIRPORT_VTD
+    if (!async) {
+        uint64_t deadline;
+        clock_interval_to_deadline(1, kSecondScale, &deadline);
+        while (epoch == dmaEpoch && data->commandPending) {
+            int result = getMainCommandGate()->commandSleep(desc, deadline, THREAD_UNINT);
+            if (result != THREAD_AWAKENED) {
+                if (data->commandPending)
+                    error = result == THREAD_TIMED_OUT ? EWOULDBLOCK : EINTR;
+                break;
+            }
+        }
+        if (epoch != dmaEpoch)
+            return ENXIO;
+        data->commandWaiting = false;
+    }
+    return error;
+#else
     return async ? 0 : tsleep_nsec(desc, PCATCH, "iwncmd", SEC_TO_NSEC(1));
+#endif
 }
 
 int ItlIwn::
@@ -5363,6 +5511,17 @@ iwn_scan(struct iwn_softc *sc, uint16_t flags, int bgscan)
 {
     XYLog("%s flags=%d bgscan=%d\n", __FUNCTION__, flags, bgscan);
     struct ieee80211com *ic = &sc->sc_ic;
+    int scanSSIDLength = ic->ic_des_esslen;
+    const uint8_t *scanSSID = ic->ic_des_essid;
+    bool scanActive = scanSSIDLength != 0;
+#ifdef AIRPORT_WCL
+    scanActive = AirportWCL::scanUsesProbes(ic->ic_wcl_scan_requested,
+        ic->ic_wcl_scan_active);
+    if (ic->ic_wcl_scan_requested) {
+        scanSSIDLength = ic->ic_wcl_scan_ssid_length;
+        scanSSID = ic->ic_wcl_scan_ssid;
+    }
+#endif
     struct iwn_scan_hdr *hdr;
     struct iwn_cmd_data *tx;
     struct iwn_scan_essid *essid;
@@ -5458,10 +5617,10 @@ iwn_scan(struct iwn_softc *sc, uint16_t flags, int bgscan)
      * If we're scanning for a specific SSID, add it to the command.
      */
     essid = (struct iwn_scan_essid *)(tx + 1);
-    if (ic->ic_des_esslen != 0) {
+    if (scanActive) {
         essid[0].id = IEEE80211_ELEMID_SSID;
-        essid[0].len = ic->ic_des_esslen;
-        memcpy(essid[0].data, ic->ic_des_essid, ic->ic_des_esslen);
+        essid[0].len = scanSSIDLength;
+        memcpy(essid[0].data, scanSSID, scanSSIDLength);
 
         is_active = 1;
     }
@@ -5534,10 +5693,15 @@ iwn_scan(struct iwn_softc *sc, uint16_t flags, int bgscan)
         chan->chan = htole16(ieee80211_chan2ieee(ic, c));
         DPRINTFN(2, ("adding channel %d\n", chan->chan));
         chan->flags = 0;
-        if (ic->ic_des_esslen != 0)
+        if (scanActive)
             chan->flags |= htole32(IWN_CHAN_NPBREQS(1));
 
+        #ifdef AIRPORT_WCL
+        if (!AirportWCL::probeChannel(scanActive,
+                c->ic_flags & IEEE80211_CHAN_PASSIVE, c->ic_flags & IEEE80211_CHAN_DFS))
+#else
         if (c->ic_flags & IEEE80211_CHAN_PASSIVE)
+#endif
             chan->flags |= htole32(IWN_CHAN_PASSIVE);
         else
             chan->flags |= htole32(IWN_CHAN_ACTIVE);
@@ -7260,6 +7424,11 @@ iwn_hw_prepare(struct iwn_softc *sc)
 int ItlIwn::
 iwn_hw_init(struct iwn_softc *sc)
 {
+#ifdef AIRPORT_VTD
+    if (dmaDetaching)
+        return ENXIO;
+    sc->sc_pcitag->setBusMasterEnable(true);
+#endif
     struct iwn_ops *ops = &sc->ops;
     int error, chnl, qid;
 
@@ -7364,6 +7533,17 @@ iwn_hw_init(struct iwn_softc *sc)
 void ItlIwn::
 iwn_hw_stop(struct iwn_softc *sc)
 {
+#ifdef AIRPORT_VTD
+    if (!getMainWorkLoop()->inGate()) {
+        getMainCommandGate()->runAction(
+            [](OSObject *, void *arg0, void *arg1, void *, void *) -> IOReturn {
+                static_cast<ItlIwn *>(arg0)->iwn_hw_stop(static_cast<iwn_softc *>(arg1));
+                return kIOReturnSuccess;
+            }, this, sc);
+        return;
+    }
+    dmaEpoch++;
+#endif
     int chnl, qid, ntries;
 
     IWN_WRITE(sc, IWN_RESET, IWN_RESET_NEVO);
@@ -7398,8 +7578,10 @@ iwn_hw_stop(struct iwn_softc *sc)
     iwn_reset_rx_ring(sc, &sc->rxq);
 
     /* Reset all TX rings. */
+#ifndef AIRPORT_VTD
     for (qid = 0; qid < sc->ntxqs; qid++)
         iwn_reset_tx_ring(sc, &sc->txq[qid]);
+#endif
 
     if (iwn_nic_lock(sc) == 0) {
         iwn_prph_write(sc, IWN_APMG_CLK_DIS,
@@ -7409,6 +7591,11 @@ iwn_hw_stop(struct iwn_softc *sc)
     DELAY(5);
     /* Power OFF adapter. */
     iwn_apm_stop(sc);
+#ifdef AIRPORT_VTD
+    sc->sc_pcitag->setBusMasterEnable(false);
+    for (qid = 0; qid < sc->ntxqs; qid++)
+        iwn_reset_tx_ring(sc, &sc->txq[qid]);
+#endif
 }
 
 int ItlIwn::
@@ -7419,6 +7606,10 @@ iwn_init(struct _ifnet *ifp)
     struct ieee80211com *ic = &sc->sc_ic;
     int error;
 
+#ifdef AIRPORT_WCL
+    if (ic->ic_event_handler)
+        ic->ic_event_handler(ic, IEEE80211_EVT_DRIVER_RESET_BEGIN, NULL);
+#endif
     memset(sc->bss_node_addr, 0, sizeof(sc->bss_node_addr));
     sc->agg_queue_mask = 0;
     memset(sc->sc_tx_ba, 0, sizeof(sc->sc_tx_ba));
@@ -7473,6 +7664,10 @@ iwn_init(struct _ifnet *ifp)
     else
         ieee80211_new_state(ic, IEEE80211_S_RUN, -1);
 
+#ifdef AIRPORT_WCL
+    if (ic->ic_event_handler)
+        ic->ic_event_handler(ic, IEEE80211_EVT_DRIVER_READY, NULL);
+#endif
     return 0;
 
 fail:    iwn_stop(ifp);
@@ -7488,6 +7683,16 @@ iwn_stop(struct _ifnet *ifp)
     timeout_del(&sc->calib_to);
     ifp->if_timer = sc->sc_tx_timer = 0;
     ifp->if_flags &= ~IFF_RUNNING;
+#ifdef AIRPORT_WCL
+    // A stopped firmware scan cannot deliver its completion event.
+    ic->ic_flags &= ~(IEEE80211_F_BGSCAN | IEEE80211_F_ASCAN);
+    ic->ic_wcl_scan_requested = false;
+    ic->ic_wcl_scan_active = false;
+    ic->ic_wcl_scan_ssid_length = 0;
+    if (ic->ic_event_handler)
+        ic->ic_event_handler(ic, IEEE80211_EVT_DRIVER_STOPPED, NULL);
+#endif
+
     ifq_clr_oactive(&ifp->if_snd);
 
     ieee80211_new_state(ic, IEEE80211_S_INIT, -1);

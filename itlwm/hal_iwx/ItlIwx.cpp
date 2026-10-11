@@ -2295,11 +2295,7 @@ iwx_poll_bit(struct iwx_softc *sc, int reg, uint32_t bits, uint32_t mask,
              int timo)
 {
     for (;;) {
-        uint32_t val = IWX_READ(sc, reg);
-        if (val == 0xFFFFFFFF) {
-            return 0;
-        }
-        if ((val & mask) == (bits & mask)) {
+        if ((IWX_READ(sc, reg) & mask) == (bits & mask)) {
             return 1;
         }
         if (timo < 10) {
@@ -2558,16 +2554,16 @@ iwx_disable_rx_dma(struct iwx_softc *sc)
         if (sc->sc_device_family >= IWX_DEVICE_FAMILY_AX210) {
             iwx_write_umac_prph(sc, IWX_RFH_RXF_DMA_CFG_GEN3, 0);
             for (ntries = 0; ntries < 1000; ntries++) {
-                uint32_t val = iwx_read_umac_prph(sc, IWX_RFH_GEN_STATUS_GEN3);
-                if (val == 0xFFFFFFFF || (val & IWX_RXF_DMA_IDLE))
+                if (iwx_read_umac_prph(sc, IWX_RFH_GEN_STATUS_GEN3) &
+                    IWX_RXF_DMA_IDLE)
                     break;
                 DELAY(10);
             }
         } else {
             iwx_write_prph(sc, IWX_RFH_RXF_DMA_CFG, 0);
             for (ntries = 0; ntries < 1000; ntries++) {
-                uint32_t val = iwx_read_prph(sc, IWX_RFH_GEN_STATUS);
-                if (val == 0xFFFFFFFF || (val & IWX_RXF_DMA_IDLE))
+                if (iwx_read_prph(sc, IWX_RFH_GEN_STATUS) &
+                    IWX_RXF_DMA_IDLE)
                     break;
                 DELAY(10);
             }
@@ -2978,11 +2974,7 @@ iwx_prepare_card_hw(struct iwx_softc *sc)
         IWX_SETBITS(sc, IWX_CSR_HW_IF_CONFIG_REG,
                     IWX_CSR_HW_IF_CONFIG_REG_PREPARE);
         
-        t = 0;
         do {
-            uint32_t val = IWX_READ(sc, IWX_CSR_HW_IF_CONFIG_REG);
-            if (val == 0xFFFFFFFF)
-                return ENXIO;
             if (iwx_set_hw_ready(sc))
                 return 0;
             DELAY(200);

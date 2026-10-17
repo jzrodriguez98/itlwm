@@ -162,7 +162,11 @@ public:
     virtual IOReturn getVHT_MCS_INDEX_SET(apple80211_vht_mcs_index_set_data *) AIRPORT_SKYWALK_OVERRIDE;
     virtual IOReturn getMCS_VHT(apple80211_mcs_vht_data *) AIRPORT_SKYWALK_OVERRIDE;
     virtual IOReturn getGAS_RESULTS(apple80211_gas_result_t *) AIRPORT_SKYWALK_OVERRIDE { return kIOReturnUnsupported; }
+#ifdef AIRPORT_WCL
+    IOReturn getCHANNELS_INFO(apple80211_channels_info *) override;
+#else
     virtual IOReturn getCHANNELS_INFO(apple80211_channels_info *) AIRPORT_SKYWALK_OVERRIDE { return kIOReturnUnsupported; }
+#endif
     virtual IOReturn getVHT_CAPABILITY(apple80211_vht_capability *) AIRPORT_SKYWALK_OVERRIDE { return kIOReturnUnsupported; }
     virtual IOReturn getBGSCAN_CACHE_RESULTS(apple80211_bgscan_cached_network_data_list *) AIRPORT_SKYWALK_OVERRIDE { return kIOReturnUnsupported; }
     virtual IOReturn getROAM_PROFILE(apple80211_roam_profile_band_data *) AIRPORT_SKYWALK_OVERRIDE { return kIOReturnUnsupported; }
@@ -236,7 +240,11 @@ public:
 #else
     virtual IOReturn getWCL_BSS_INFO(apple80211_beacon_msg *) AIRPORT_SKYWALK_OVERRIDE { return kIOReturnUnsupported; }
 #endif
+#ifdef AIRPORT_WCL
+    IOReturn getWCL_TRAFFIC_COUNTERS(apple80211_wcl_traffic_counters *) override;
+#else
     virtual IOReturn getWCL_TRAFFIC_COUNTERS(apple80211_wcl_traffic_counters *) AIRPORT_SKYWALK_OVERRIDE { return kIOReturnUnsupported; }
+#endif
     virtual IOReturn getWCL_GET_TX_BLANKING_STATUS(uint *) AIRPORT_SKYWALK_OVERRIDE { return kIOReturnUnsupported; }
     virtual IOReturn getSSID_TRANSITION_SUPPORT(apple80211_ssid_transition_feature_enabled *) AIRPORT_SKYWALK_OVERRIDE { return kIOReturnUnsupported; }
 #ifdef AIRPORT_WCL
@@ -256,6 +264,8 @@ public:
 #ifdef AIRPORT_WCL
     virtual IOReturn getWCL_EXTENDED_BSS_INFO(apple80211_extended_bss_info *) override;
     IOReturn copyWCLExtendedBss(void *);
+    IOReturn copyWCLChannels(void *);
+    IOReturn copyWCLTrafficCounters(void *);
 #else
     virtual IOReturn getWCL_EXTENDED_BSS_INFO(apple80211_extended_bss_info *) AIRPORT_SKYWALK_OVERRIDE { return kIOReturnUnsupported; }
 #endif
@@ -377,7 +387,11 @@ public:
     virtual IOReturn setWCL_ASSOCIATE(apple80211_assoc_candidates *) AIRPORT_SKYWALK_OVERRIDE { return kIOReturnUnsupported; }
     virtual IOReturn setWCL_PROTECT_IP(apple80211_wcl_protect_ip_mode *) AIRPORT_SKYWALK_OVERRIDE { return kIOReturnUnsupported; }
     virtual IOReturn setWCL_LINK_UP_DONE(void *) AIRPORT_SKYWALK_OVERRIDE { return kIOReturnUnsupported; }
+#ifdef AIRPORT_WCL
+    IOReturn setWCL_SET_SCAN_HOME_AWAY_TIME(scanHomeAndAwayTime *) override;
+#else
     virtual IOReturn setWCL_SET_SCAN_HOME_AWAY_TIME(scanHomeAndAwayTime *) AIRPORT_SKYWALK_OVERRIDE { return kIOReturnUnsupported; }
+#endif
     virtual IOReturn setWCL_VOLUNTARY_NETWORK_DISCONNECT(apple80211_wcl_voluntary_network_disconnect *) AIRPORT_SKYWALK_OVERRIDE { return kIOReturnUnsupported; }
 #ifdef AIRPORT_WCL
     virtual IOReturn setWCL_LINK_STATE_UPDATE(apple80211_wcl_update_link_state *) override;
@@ -414,7 +428,9 @@ private:
     static void wclCountryUpdateThread(void *, void *);
     static IOReturn wclCountryUpdateGated(OSObject *, void *, void *, void *, void *);
     static IOReturn stopWCLGated(OSObject *, void *, void *, void *, void *);
+    static IOReturn updateWCLLinkQualityGated(OSObject *, void *, void *, void *, void *);
     void deferWCLCountryUpdate();
+    void updateWCLLinkQuality(bool = false);
     static void wclJoinTimeout(OSObject *, IOTimerEventSource *);
     IOReturn beginWCLScan(apple80211ScanRequest *);
     void clearWCLPMKSA();
@@ -440,6 +456,8 @@ private:
     uint32_t wclAssociatedBeacons = 0;
     uint32_t wclLqmBeacons = 0;
     uint32_t wclLqmReportedBeacons = 0;
+    int wclReportedLinkQuality = -2;
+    ifnet_t wclLinkQualityInterface = nullptr;
     bool joinPending;
     bool joinDeferred = false;
     AirportWCL::JoinRequest deferredJoin = {};

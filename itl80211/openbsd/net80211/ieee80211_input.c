@@ -619,11 +619,13 @@ ieee80211_inputm(struct _ifnet *ifp, mbuf_t m, struct ieee80211_node *ni,
                 bpf_mtap(ic->ic_rawbpf, m, BPF_DIRECTION_IN);
 #endif
             
+#ifdef AIRPORT_WCL
+            if (ic->ic_opmode == IEEE80211_M_STA)
+                ++ic->ic_wcl_rx_packets[hasqos ? ieee80211_wcl_ac(tid) : EDCA_AC_BE];
+#endif
             if ((ni->ni_flags & IEEE80211_NODE_HT) &&
                 hasqos && (qos & IEEE80211_QOS_AMSDU))
                 ieee80211_amsdu_decap(ic, m, ni, hdrlen, ml);
-            else
-                ieee80211_decap(ic, m, ni, hdrlen, ml);
             return;
             
         case IEEE80211_FC0_TYPE_MGT:
@@ -1282,9 +1284,12 @@ ieee80211_amsdu_decap(struct ieee80211com *ic, mbuf_t m,
     
     while (mbuf_pkthdr_len(m) >= ETHER_HDR_LEN + LLC_SNAPFRAMELEN) {
         /* process an A-MSDU subframe */
-        mbuf_pullup(&m, ETHER_HDR_LEN + LLC_SNAPFRAMELEN);
-        if (m == NULL)
-            break;
+        if (mbuf_len(m) < ETHER_HDR_LEN + LLC_SNAPFRAMELEN &&
+            mbuf_pullup(&m, ETHER_HDR_LEN + LLC_SNAPFRAMELEN)) {
+            ic->ic_stats.is_rx_decap++;
+            ml_purge(&subframes);
+            return;
+        }
         eh = mtod(m, struct ether_header *);
         /* examine 802.3 header */
         len = ntohs(eh->ether_type);
@@ -1322,9 +1327,7 @@ ieee80211_amsdu_decap(struct ieee80211com *ic, mbuf_t m,
             return;
         }
         
-        /* "detach" our A-MSDU subframe from the others */
-        mbuf_split(m, len, MBUF_DONTWAIT, &n);
-        if (n == NULL) {
+        if (ieee80211_amsdu_decap_validate(ic, m, ni)) {
             /* stop processing A-MSDU subframes */
             ic->ic_stats.is_rx_decap++;
             ml_purge(&subframes);
@@ -1332,7 +1335,9 @@ ieee80211_amsdu_decap(struct ieee80211com *ic, mbuf_t m,
             return;
         }
         
-        if (ieee80211_amsdu_decap_validate(ic, m, ni)) {
+        /* "detach" our A-MSDU subframe from the others */
+        mbuf_split(m, len, MBUF_DONTWAIT, &n);
+        if (n == NULL) {
             /* stop processing A-MSDU subframes */
             ic->ic_stats.is_rx_decap++;
             ml_purge(&subframes);

@@ -1704,6 +1704,10 @@ iwm_tx(struct iwm_softc *sc, mbuf_t m, struct ieee80211_node *ni, int ac)
     wh = mtod(m, struct ieee80211_frame *);
     type = wh->i_fc[0] & IEEE80211_FC0_TYPE_MASK;
     subtype = wh->i_fc[0] & IEEE80211_FC0_SUBTYPE_MASK;
+#ifdef AIRPORT_WCL
+    const int trafficAC = ieee80211_has_qos(wh) ?
+        ieee80211_wcl_ac(ieee80211_get_qos(wh) & IEEE80211_QOS_TID) : EDCA_AC_BE;
+#endif
     
     if (type == IEEE80211_FC0_TYPE_CTL)
         hdrlen = sizeof(struct ieee80211_frame_min);
@@ -1973,6 +1977,10 @@ iwm_tx(struct iwm_softc *sc, mbuf_t m, struct ieee80211_node *ni, int ac)
     if (ic->ic_if.if_flags & IFF_UP)
         sc->sc_tx_timer[ring->qid] = 15;
     
+#ifdef AIRPORT_WCL
+    if (type == IEEE80211_FC0_TYPE_DATA && !(subtype & IEEE80211_FC0_SUBTYPE_NODATA))
+        ++ic->ic_wcl_tx_packets[trafficAC];
+#endif
     return 0;
 }
 
@@ -3687,7 +3695,11 @@ iwm_start(struct _ifnet *ifp)
 //        if (that->outputThreadSignal) {
 //            semaphore_signal(that->outputThreadSignal);
 //        }
+#ifdef AIRPORT_WCL
+    that->getMainCommandGate()->runAction(_iwm_start_task, &that->com.sc_ic.ic_ac.ac_if);
+#else
     that->getMainCommandGate()->attemptAction(_iwm_start_task, &that->com.sc_ic.ic_ac.ac_if);
+#endif
 //    _iwm_start_task(that, &that->com.sc_ic.ic_ac.ac_if, NULL, NULL, NULL);
 }
 
@@ -5193,12 +5205,11 @@ iwm_ba_task(void *arg)
             ba->ba_bitmap = 0;
             if (!that->iwm_sta_tx_agg(sc, ni, tid, 0, ssn, 1)) {
                 ieee80211_addba_resp_accept(ic, ni, tid);
-                sc->lq_sta.rs_drv.lq.agg_frame_cnt_limit = LINK_QUAL_AGG_FRAME_LIMIT_DEF;
 
                 XYLog("Tx aggregation enabled on ra = %s tid = %d\n",
                          ether_sprintf(ni->ni_macaddr), tid);
 
-                iwl_mvm_send_lq_cmd(sc, &sc->lq_sta.rs_drv.lq);
+                iwl_mvm_rs_set_agg_limit(sc, LINK_QUAL_AGG_FRAME_LIMIT_DEF);
             } else {
             out:
                 ieee80211_addba_resp_refuse(ic, ni, tid,

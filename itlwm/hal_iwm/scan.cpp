@@ -385,6 +385,10 @@ iwm_lmac_scan(struct iwm_softc *sc, int bgscan)
     struct iwm_scan_probe_req_v1 *preq;
     size_t req_len;
     int err, async = bgscan;
+#ifdef AIRPORT_WCL
+    const auto timing = AirportWCL::scanTiming(ic->ic_wcl_scan_away_time_ms, bgscan,
+        isset(sc->sc_ucode_api, IWM_UCODE_TLV_API_FRAGMENTED_SCAN));
+#endif
     
     req_len = sizeof(struct iwm_scan_req_lmac) +
     (sizeof(struct iwm_scan_channel_cfg_lmac) *
@@ -412,6 +416,9 @@ iwm_lmac_scan(struct iwm_softc *sc, int bgscan)
         req->max_out_time = htole32(0);
         req->suspend_time = htole32(0);
     }
+#ifdef AIRPORT_WCL
+    req->max_out_time = htole32(timing.maxOutTU);
+#endif
     req->scan_prio = htole32(IWM_SCAN_PRIORITY_HIGH);
     req->rx_chain_select = iwm_scan_rx_chain(sc);
     req->iter_num = htole32(1);
@@ -421,6 +428,10 @@ iwm_lmac_scan(struct iwm_softc *sc, int bgscan)
                               IWM_LMAC_SCAN_FLAG_ITER_COMPLETE |
                               IWM_LMAC_SCAN_FLAG_EXTENDED_DWELL);
 #ifdef AIRPORT_WCL
+    if (timing.fragmented) {
+        req->scan_flags |= htole32(IWM_LMAC_SCAN_FLAG_FRAGMENTED);
+        req->scan_flags &= ~htole32(IWM_LMAC_SCAN_FLAG_EXTENDED_DWELL);
+    }
     if (scanActive && scanSSIDLength == 0)
         req->scan_flags &= ~htole32(IWM_LMAC_SCAN_FLAG_EXTENDED_DWELL);
 #endif
@@ -648,6 +659,10 @@ iwm_umac_scan(struct iwm_softc *sc, int bgscan)
     struct iwm_scan_umac_chan_param *chanparam;
     size_t req_len;
     int err, async = bgscan;
+#ifdef AIRPORT_WCL
+    const auto timing = AirportWCL::scanTiming(ic->ic_wcl_scan_away_time_ms, bgscan,
+        isset(sc->sc_ucode_api, IWM_UCODE_TLV_API_FRAGMENTED_SCAN));
+#endif
     
     req_len = iwm_umac_scan_size(sc);
     if ((req_len < IWM_SCAN_REQ_UMAC_SIZE_V1 +
@@ -701,16 +716,21 @@ iwm_umac_scan(struct iwm_softc *sc, int bgscan)
     
     if (bgscan) {
         const uint32_t timeout = htole32(120);
+#ifdef AIRPORT_WCL
+        const uint32_t maxOut = htole32(timing.maxOutTU);
+#else
+        const uint32_t maxOut = timeout;
+#endif
         if (isset(sc->sc_ucode_api,
                   IWM_UCODE_TLV_API_ADAPTIVE_DWELL_V2)) {
-            req->v8.max_out_time[IWM_SCAN_LB_LMAC_IDX] = timeout;
+            req->v8.max_out_time[IWM_SCAN_LB_LMAC_IDX] = maxOut;
             req->v8.suspend_time[IWM_SCAN_LB_LMAC_IDX] = timeout;
         } else if (isset(sc->sc_ucode_api,
                          IWM_UCODE_TLV_API_ADAPTIVE_DWELL)) {
-            req->v7.max_out_time[IWM_SCAN_LB_LMAC_IDX] = timeout;
+            req->v7.max_out_time[IWM_SCAN_LB_LMAC_IDX] = maxOut;
             req->v7.suspend_time[IWM_SCAN_LB_LMAC_IDX] = timeout;
         } else {
-            req->v1.max_out_time = timeout;
+            req->v1.max_out_time = maxOut;
             req->v1.suspend_time = timeout;
         }
     }
@@ -770,6 +790,15 @@ iwm_umac_scan(struct iwm_softc *sc, int bgscan)
         htole32(IWM_UMAC_SCAN_GEN_FLAGS_EXTENDED_DWELL);
     }
     
+#ifdef AIRPORT_WCL
+    if (timing.fragmented) {
+        req->general_flags &= ~htole16(IWM_UMAC_SCAN_GEN_FLAGS_EXTENDED_DWELL);
+        req->general_flags |= htole16(IWM_UMAC_SCAN_GEN_FLAGS_FRAGMENTED);
+        if (isset(sc->sc_ucode_api, IWM_UCODE_TLV_API_ADAPTIVE_DWELL_V2))
+            req->v8.num_of_fragments[IWM_SCAN_LB_LMAC_IDX] = 3;
+    }
+#endif
+
     if (isset(sc->sc_ucode_api, IWM_UCODE_TLV_API_SCAN_EXT_CHAN_VER))
         err = iwm_fill_probe_req(sc, &tail->preq);
     else

@@ -130,12 +130,59 @@ setLinkState(IO80211LinkState state)
 
 extern const char* hexdump(uint8_t *buf, size_t len);
 
+#ifdef AIRPORT_WCL
+static mbuf_t normalizeInputPacket(mbuf_t packet, UInt32 length)
+{
+    const size_t packetLength = length ? length : mbuf_pkthdr_len(packet);
+    if (!(mbuf_flags(packet) & MBUF_PKTHDR) || packetLength < ETHER_HDR_LEN) {
+        mbuf_freem(packet);
+        return NULL;
+    }
+    if (!mbuf_next(packet) && mbuf_len(packet) >= packetLength)
+        return packet;
+
+    unsigned int maxChunks = 1;
+    mbuf_t linear = NULL;
+    if (mbuf_allocpacket(MBUF_DONTWAIT, packetLength + ETHER_ALIGN, &maxChunks, &linear)) {
+        mbuf_freem(packet);
+        return NULL;
+    }
+    UInt8 *data = static_cast<UInt8 *>(mbuf_data(linear)) + ETHER_ALIGN;
+    if (mbuf_copydata(packet, 0, packetLength, data) ||
+        mbuf_copy_pkthdr(linear, packet) ||
+        mbuf_setdata(linear, data, packetLength)) {
+        mbuf_freem(linear);
+        mbuf_freem(packet);
+        return NULL;
+    }
+    mbuf_pkthdr_setlen(linear, packetLength);
+    mbuf_pkthdr_setheader(linear, NULL);
+    mbuf_freem(packet);
+    return linear;
+}
+#endif
+
 UInt32 AirportItlwmEthernetInterface::
 inputPacket(mbuf_t packet, UInt32 length, IOOptionBits options, void *param)
 {
 #ifdef AIRPORT_WCL
     if (!packet)
         return 0;
+    if (!getIfnet()) {
+        mbuf_freem(packet);
+        return 0;
+    }
+    const bool directInput = param == packet;
+    packet = normalizeInputPacket(packet, length);
+    if (!packet) {
+        IONetworkData *data = getParameter(kIONetworkStatsKey);
+        IONetworkStats *stats = data ? (IONetworkStats *)data->getBuffer() : NULL;
+        if (stats)
+            stats->inputErrors++;
+        return 0;
+    }
+    if (directInput)
+        param = packet;
 #endif
 #ifndef AIRPORT_WCL
     ether_header_t *eh;

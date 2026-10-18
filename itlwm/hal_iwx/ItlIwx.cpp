@@ -8125,9 +8125,9 @@ iwx_umac_scan(struct iwx_softc *sc, int bgscan)
         req->v7.suspend_time[IWX_SCAN_LB_LMAC_IDX] = timeout;
         
         if (isset(sc->sc_enabled_capa, IWX_UCODE_TLV_CAPA_CDB_SUPPORT)) {
-            req->v6.max_out_time[IWX_SCAN_HB_LMAC_IDX] =
+            req->v7.max_out_time[IWX_SCAN_HB_LMAC_IDX] =
                 maxOut;
-            req->v6.suspend_time[IWX_SCAN_HB_LMAC_IDX] =
+            req->v7.suspend_time[IWX_SCAN_HB_LMAC_IDX] =
                 timeout;
         }
         
@@ -8155,7 +8155,7 @@ iwx_umac_scan(struct iwx_softc *sc, int bgscan)
         
         if (isset(sc->sc_enabled_capa, IWX_UCODE_TLV_CAPA_CDB_SUPPORT)) {
             req->v6.max_out_time[IWX_SCAN_HB_LMAC_IDX] =
-                timeout;
+                maxOut;
             req->v6.suspend_time[IWX_SCAN_HB_LMAC_IDX] =
                 timeout;
         }

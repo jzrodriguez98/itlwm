@@ -626,6 +626,8 @@ ieee80211_inputm(struct _ifnet *ifp, mbuf_t m, struct ieee80211_node *ni,
             if ((ni->ni_flags & IEEE80211_NODE_HT) &&
                 hasqos && (qos & IEEE80211_QOS_AMSDU))
                 ieee80211_amsdu_decap(ic, m, ni, hdrlen, ml);
+            else
+                ieee80211_decap(ic, m, ni, hdrlen, ml);
             return;
             
         case IEEE80211_FC0_TYPE_MGT:

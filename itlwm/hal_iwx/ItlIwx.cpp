@@ -110,6 +110,7 @@
 #include "../../AirportItlwm/WCL/WCL.hpp"
 #endif
 #include "ItlIwx.hpp"
+#include <HAL/ItlGate.hpp>
 #include <linux/types.h>
 #include <linux/kernel.h>
 #include <FwData.h>
@@ -10912,6 +10913,8 @@ iwx_start(struct _ifnet *ifp)
     ItlIwx *that = container_of(sc, ItlIwx, com);
 #ifdef AIRPORT_WCL
     that->getMainCommandGate()->runAction(_iwx_start_task, &that->com.sc_ic.ic_ac.ac_if);
+#elif !defined(AIRPORT)
+    itlAttemptActionRetry(that->getMainCommandGate(), _iwx_start_task, &that->com.sc_ic.ic_ac.ac_if);
 #else
     that->getMainCommandGate()->attemptAction(_iwx_start_task, &that->com.sc_ic.ic_ac.ac_if);
 #endif

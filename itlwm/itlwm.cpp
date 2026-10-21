@@ -631,8 +631,9 @@ IOReturn itlwm::outputStart(IONetworkInterface *interface, IOOptionBits options)
      while (m) {
          mbuf_t next = mbuf_nextpkt(m);
          mbuf_setnextpkt(m, NULL);
-         enqueuePacket(m);
-         m = next;
+        ITL_DIAG_INC(outPkts);                            // NEW
+        enqueuePacket(m);
+        m = next;
      }
      (*ifp->if_start)(ifp);
     if (ifq_is_oactive(&ifp->if_snd)) {                   // NEW (braces)

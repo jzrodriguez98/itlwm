@@ -111,6 +111,7 @@
 #endif
 #include "ItlIwx.hpp"
 #include <HAL/ItlGate.hpp>
+#include <HAL/ItlTxDiag.hpp>                             // NEW
 #include <linux/types.h>
 #include <linux/kernel.h>
 #include <FwData.h>
@@ -5990,6 +5991,7 @@ iwx_rx_tx_cmd_single(struct iwx_softc *sc, struct iwx_rx_packet *pkt,
     txfail = (status != IWX_TX_STATUS_SUCCESS);
     
     if (txfail) {
+        ITL_DIAG_INC(respFail);                           // NEW
         DPRINTFN(3, ("%s %d OUTPUT_ERROR type=%d status=%d\n", __FUNCTION__, __LINE__, txd->type, status));
         ifp->netStat->outputErrors++;
         if (txd->type == IEEE80211_FC0_TYPE_MGT)
@@ -6066,6 +6068,13 @@ iwx_rx_tx_ba_notif(struct iwx_softc *sc, struct iwx_rx_packet *pkt, struct iwx_r
     if (ba_res->sta_id != IWX_STATION_ID)
         return;
     sc->sc_tx_timer = 0;
+    ITL_DIAG_INC(baNotif);                                // NEW
+    ITL_DIAG_ADD(baTfd, le16toh(ba_res->tfd_cnt));        // NEW
+    ITL_DIAG_ADD(baTxed, le16toh(ba_res->txed));          // NEW
+    ITL_DIAG_ADD(baDone, le16toh(ba_res->done));          // NEW
+    ITL_DIAG_ADD(baRetry, ba_res->retry_cnt);             // NEW
+    itlTxDiag().lastTxRate = le32toh(ba_res->tx_rate);    // NEW
+    itlTxDiag().lastTlcInfo = ba_res->tlc_rate_info;      // NEW
 
     if (le32toh(ba_res->flags) != IWX_BA_RESP_TX_BAR && le32toh(ba_res->flags) != IWX_BA_RESP_TX_AGG){
         DPRINTFN(3, ("BA_NOTIFICATION flags %x, sent:%d, acked:%d, tfd_cnt:%d, query_frame_cnt:%d, retry_cnt:%d\n",

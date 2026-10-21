@@ -408,6 +408,32 @@ void itlwm::watchdogAction(IOTimerEventSource *timer)
 {
     struct _ifnet *ifp = getIfp();
     (*ifp->if_watchdog)(ifp);
+    /* TX diagnostics: read with  ioreg -l -w0 | grep txd_  */      // NEW from here
+    {
+        const ItlTxDiag &d = itlTxDiag();
+        setProperty("txd_out_calls", d.outCalls, 64);
+        setProperty("txd_out_pkts", d.outPkts, 64);
+        setProperty("txd_out_nores", d.outNoRes, 64);
+        setProperty("txd_out_qmax", d.outQMax, 64);
+        setProperty("txd_start_runs", d.startRuns, 64);
+        setProperty("txd_start_blocked", d.startBlocked, 64);
+        setProperty("txd_tx_data", d.txData, 64);
+        setProperty("txd_tx_agg", d.txAgg, 64);
+        setProperty("txd_tx_nonagg", d.txNonAgg, 64);
+        setProperty("txd_ring_max", d.ringMax, 64);
+        setProperty("txd_qfull_set", d.qfullSet, 64);
+        setProperty("txd_ba_notif", d.baNotif, 64);
+        setProperty("txd_ba_tfd", d.baTfd, 64);
+        setProperty("txd_ba_txed", d.baTxed, 64);
+        setProperty("txd_ba_done", d.baDone, 64);
+        setProperty("txd_ba_retry", d.baRetry, 64);
+        setProperty("txd_resp_single", d.respSingle, 64);
+        setProperty("txd_resp_multi", d.respMulti, 64);
+        setProperty("txd_resp_fail", d.respFail, 64);
+        setProperty("txd_tx_timeout", d.txTimeout, 64);
+        setProperty("txd_last_tx_rate", (unsigned long long)d.lastTxRate, 32);
+        setProperty("txd_last_tlc_info", (unsigned long long)d.lastTlcInfo, 32);
+    }                                                                // NEW to here
     watchdogTimer->setTimeoutMS(kWatchDogTimerPeriod);
 }
 

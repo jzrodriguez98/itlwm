@@ -610,15 +610,19 @@ IOReturn itlwm::outputStart(IONetworkInterface *interface, IOOptionBits options)
 {
      struct _ifnet *ifp = &fHalService->get80211Controller()->ic_ac.ac_if;
      mbuf_t m = NULL;
-     if (!ifp->if_snd.queue)
-         return kIOReturnNoResources;
+    ITL_DIAG_INC(outCalls);                               // NEW
+    if (!ifp->if_snd.queue)
+        return kIOReturnNoResources;
      /* Kick the hardware queue first if packets are already waiting. */
      if (!ifq_empty(&ifp->if_snd))
          (*ifp->if_start)(ifp);
      const uint32_t capacity = ifp->if_snd.queue->getCapacity();
      const uint32_t queued = ifq_len(&ifp->if_snd);
-     if (ifq_is_oactive(&ifp->if_snd) || queued >= capacity)
-         return kIOReturnNoResources;
+     ITL_DIAG_MAX(outQMax, queued);                        // NEW
+    if (ifq_is_oactive(&ifp->if_snd) || queued >= capacity) {   // NEW (brace)
+        ITL_DIAG_INC(outNoRes);                           // NEW
+        return kIOReturnNoResources;
+    }                                                     // NEW (brace)
      /* Pull up to 32 packets at once and start the hardware once per batch. */
      const uint32_t room = capacity - queued;
      const uint32_t count = room < 32U ? room : 32U;

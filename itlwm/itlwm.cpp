@@ -635,9 +635,11 @@ IOReturn itlwm::outputStart(IONetworkInterface *interface, IOOptionBits options)
          m = next;
      }
      (*ifp->if_start)(ifp);
-     if (ifq_is_oactive(&ifp->if_snd))
-         return kIOReturnNoResources;
-     return kIOReturnSuccess;
+    if (ifq_is_oactive(&ifp->if_snd)) {                   // NEW (braces)
+        ITL_DIAG_INC(outNoRes);                           // NEW
+        return kIOReturnNoResources;
+    }                                                     // NEW (braces)
+    return kIOReturnSuccess;
 }
 #endif
 

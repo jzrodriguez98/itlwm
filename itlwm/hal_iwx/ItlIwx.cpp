@@ -7014,6 +7014,13 @@ iwx_tx(struct iwx_softc *sc, mbuf_t m, struct ieee80211_node *ni, int ac)
         mbuf_freem(m);
         return EINVAL;
     }
+    if (type == IEEE80211_FC0_TYPE_DATA) {                // NEW
+        ITL_DIAG_INC(txData);                             // NEW
+        if (qid != sc->first_data_qid)                    // NEW
+            ITL_DIAG_INC(txAgg);                          // NEW
+        else                                              // NEW
+            ITL_DIAG_INC(txNonAgg);                       // NEW
+    }                                                     // NEW
     idx = (ring->cur & (ring->ring_count - 1));
 #ifdef AIRPORT_VTD
     if (!ring->desc || ring->data[idx].m || ring->queued >= ring->ring_count - 1) {
@@ -7169,7 +7176,9 @@ iwx_tx(struct iwx_softc *sc, mbuf_t m, struct ieee80211_node *ni, int ac)
     if (++ring->queued > ring->hi_mark) {
 //        XYLog("%s sc->qfullmsk is FULL qid=%d ring->cur=%d ring->queued=%d\n", __FUNCTION__, ring->qid, ring->cur, ring->queued);
         sc->qfullmsk.set(ring->qid);
+        ITL_DIAG_INC(qfullSet);                           // NEW
     }
+    ITL_DIAG_MAX(ringMax, ring->queued);                  // NEW
     
 #ifdef AIRPORT_WCL
     if (type == IEEE80211_FC0_TYPE_DATA && !(subtype & IEEE80211_FC0_SUBTYPE_NODATA))

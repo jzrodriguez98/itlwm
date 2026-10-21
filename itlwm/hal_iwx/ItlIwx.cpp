@@ -11017,6 +11017,7 @@ iwx_watchdog(struct _ifnet *ifp)
     if (sc->sc_tx_timer > 0) {
         if (--sc->sc_tx_timer == 0) {
             XYLog("%s: device timeout\n", DEVNAME(sc));
+            ITL_DIAG_INC(txTimeout);                      // NEW
 #ifdef IWX_DEBUG
             int i;
 

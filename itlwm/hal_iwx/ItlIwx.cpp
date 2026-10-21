@@ -6164,6 +6164,7 @@ iwx_rx_tx_cmd(struct iwx_softc *sc, struct iwx_rx_packet *pkt,
     sc->sc_tx_timer = 0;
 
     if (tx_resp->frame_count > 1) {
+        ITL_DIAG_INC(respMulti);                          // NEW
         for (int i = 0; i < tx_resp->frame_count; i++) {
             uint16_t fstatus = le16_to_cpu((&tx_resp->status)[i].status);
 
@@ -6176,6 +6177,7 @@ iwx_rx_tx_cmd(struct iwx_softc *sc, struct iwx_rx_packet *pkt,
                          le16_to_cpu((&tx_resp->status)[i].sequence)));
         }
     } else {
+        ITL_DIAG_INC(respSingle);                         // NEW
         tid = tx_resp->ra_tid & 0x0f;
         memcpy(&ssn, &tx_resp->status + tx_resp->frame_count, sizeof(ssn));
         ssn = le32toh(ssn) & 0xfff;

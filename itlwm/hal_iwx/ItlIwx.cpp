@@ -3653,7 +3653,7 @@ iwx_tvqm_enable_txq(struct iwx_softc *sc, int tid, int ssn, uint32_t size)
         goto fail;
     }
 #ifdef AIRPORT_VTD
-    if (fwqid <= IWX_QID_MGMT || sc->txq[fwqid].queued || wr_idx >= getTxQueueSize()) {
+    if (fwqid <= sc->first_data_qid || sc->txq[fwqid].queued || wr_idx >= getTxQueueSize()) {
         err = -EIO;
         goto fail;
     }

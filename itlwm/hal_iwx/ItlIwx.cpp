@@ -111,7 +111,8 @@
 #endif
 #include "ItlIwx.hpp"
 #include <HAL/ItlGate.hpp>
-#include <HAL/ItlTxDiag.hpp>                             // NEW
+#include <HAL/ItlTxDiag.hpp>
+ItlTxDiag gItlTxDiag;   /* the one shared instance (see ItlTxDiag.hpp) */
 #include <linux/types.h>
 #include <linux/kernel.h>
 #include <FwData.h>

@@ -12,7 +12,8 @@
 * GNU General Public License for more details.
 */
 #include "itlwm.hpp"
-#include <HAL/ItlTxDiag.hpp>                             // NEW
+#include <HAL/ItlTxDiag.hpp>                             
+ItlTxDiag gItlTxDiag;
 #include <linux/types.h>
 #include <linux/kernel.h>
 

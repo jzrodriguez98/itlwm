@@ -1,5 +1,11 @@
 # itlwm
 
+**Patches to the original itlwm Kernel Extension to allow it loading in macOS 26 with AppleVTD enabled. Patching and testing is based on and being done using a AX201 wifi chip and the AX210 wifi chip below:
+
+https://a.co/d/0hY4N3fQ EDUP PCIE WiFi 6E Card AX210 Bluetooth 5.2 AX5400M 802.11ax Tri-Band 6G/5.8G/2.4GHz Heat Sink 6dBi Antenna PCI-E Wireless Network Cards for Desktop PC Support Windows 11/10 64-bit.
+
+A lot of credits to laobamac who enhanced Aiportitlwm to support loading in macOS Tahoe and Sequoia with AppleVTD enabled. I leveraged his implementation of IOMMU / DMA enabling AppleVTD in Airportitlwm to enhance my initial implementation of itlwm with AppleVTD enabled**
+
 **An Intel Wi-Fi Adapter Kernel Extension for macOS, based on the OpenBSD Project.**
 
 ## Documentation

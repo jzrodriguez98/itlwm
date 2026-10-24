@@ -40,12 +40,9 @@ struct ItlTxDiag {
     uint32_t lastTlcInfo;   /* tlc_rate_info of the last BA notification */
 };
 
-/* A non-static inline function: one shared instance across translation units. */
-inline ItlTxDiag &itlTxDiag()
-{
-    static ItlTxDiag d;
-    return d;
-}
+/* One shared instance: defined exactly once, in itlwm/itlwm.cpp. */
+extern ItlTxDiag gItlTxDiag;
+inline ItlTxDiag &itlTxDiag() { return gItlTxDiag; }
 
 #define ITL_DIAG_INC(f)      (++itlTxDiag().f)
 #define ITL_DIAG_ADD(f, n)   (itlTxDiag().f += (uint64_t)(n))

@@ -1,9 +1,6 @@
 name: Build itlwm (HeliPort) and AirportItlwm (Sequoia, Tahoe)
 
 on:
-  push:
-    branches: [ "*" ]
-  pull_request:
   workflow_dispatch:
 
 env:

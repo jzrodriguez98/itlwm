@@ -594,32 +594,36 @@ IOReturn itlwm::outputStart(IONetworkInterface *interface, IOOptionBits options)
 }
 #endif
 
-UInt32 itlwm::enqueuePacket(mbuf_t m)
-{
-    struct ieee80211com *ic = fHalService->get80211Controller();
-    struct _ifnet *ifp = &ic->ic_ac.ac_if;
-    
-    /* Validate before touching the mbuf: NULL, already-freed or header-less mbufs are dropped. */
-    if (ic->ic_state == IEEE80211_S_RUN && ifp->if_snd.queue &&
-        m && mbuf_type(m) != MBUF_TYPE_FREE && (mbuf_flags(m) & MBUF_PKTHDR) &&
-        ifp->if_snd.queue->lockEnqueue(m))
-        return kIOReturnOutputSuccess;
-    if (ifp->netStat)
-        ++ifp->netStat->outputErrors;
-    if (m && mbuf_type(m) != MBUF_TYPE_FREE)
-        freePacket(m);
-    return kIOReturnOutputDropped;
-}
-
 UInt32 itlwm::outputPacket(mbuf_t m, void *param)
 {
     struct ieee80211com *ic = fHalService->get80211Controller();
     struct _ifnet *ifp = &ic->ic_ac.ac_if;
-    UInt32 ret = enqueuePacket(m);
+    if (ic->ic_state != IEEE80211_S_RUN ||
+        !ifp->if_snd.queue ||
+        !m ||
+        mbuf_type(m) == MBUF_TYPE_FREE ||
+        !(mbuf_flags(m) & MBUF_PKTHDR)) {
+        if (m && mbuf_type(m) != MBUF_TYPE_FREE)
+            freePacket(m);
+        return kIOReturnOutputDropped;
+    }
 
-    if (ic->ic_state == IEEE80211_S_RUN && ifp->if_snd.queue)
-        (*ifp->if_start)(ifp);
-    return ret;
+    if (!ifp->if_snd.queue->lockEnqueue(m)) {
+
+        if (ifp->netStat)
+
+            ++ifp->netStat->outputErrors;
+
+        freePacket(m);
+
+        return kIOReturnOutputDropped;
+
+    }
+
+    (*ifp->if_start)(ifp);
+
+    return kIOReturnOutputSuccess;
+
 }
 
 UInt32 itlwm::getFeatures() const

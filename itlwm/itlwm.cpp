@@ -607,23 +607,14 @@ UInt32 itlwm::outputPacket(mbuf_t m, void *param)
             freePacket(m);
         return kIOReturnOutputDropped;
     }
-
     if (!ifp->if_snd.queue->lockEnqueue(m)) {
-
         if (ifp->netStat)
-
             ++ifp->netStat->outputErrors;
-
         freePacket(m);
-
         return kIOReturnOutputDropped;
-
     }
-
     (*ifp->if_start)(ifp);
-
     return kIOReturnOutputSuccess;
-
 }
 
 UInt32 itlwm::getFeatures() const

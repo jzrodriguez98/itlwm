@@ -581,32 +581,16 @@ IOReturn itlwm::setHardwareAddress(const IOEthernetAddress *addrP)
 #ifdef __PRIVATE_SPI__
 IOReturn itlwm::outputStart(IONetworkInterface *interface, IOOptionBits options)
 {
-     struct _ifnet *ifp = &fHalService->get80211Controller()->ic_ac.ac_if;
-     mbuf_t m = NULL;
-     if (!ifp->if_snd.queue)
-         return kIOReturnNoResources;
-     /* Kick the hardware queue first if packets are already waiting. */
-     if (!ifq_empty(&ifp->if_snd))
-         (*ifp->if_start)(ifp);
-     const uint32_t capacity = ifp->if_snd.queue->getCapacity();
-     const uint32_t queued = ifq_len(&ifp->if_snd);
-     if (ifq_is_oactive(&ifp->if_snd) || queued >= capacity)
-         return kIOReturnNoResources;
-     /* Pull up to 32 packets at once and start the hardware once per batch. */
-     const uint32_t room = capacity - queued;
-     const uint32_t count = room < 32U ? room : 32U;
-     if (interface->dequeueOutputPackets(count, &m) != kIOReturnSuccess || !m)
-         return kIOReturnSuccess;
-     while (m) {
-         mbuf_t next = mbuf_nextpkt(m);
-         mbuf_setnextpkt(m, NULL);
-         enqueuePacket(m);
-         m = next;
-     }
-     (*ifp->if_start)(ifp);
-     if (ifq_is_oactive(&ifp->if_snd))
-         return kIOReturnNoResources;
-     return kIOReturnSuccess;
+    struct _ifnet *ifp = &fHalService->get80211Controller()->ic_ac.ac_if;
+    mbuf_t m = NULL;
+    if (ifq_is_oactive(&ifp->if_snd))
+        return kIOReturnNoResources;
+    while (kIOReturnSuccess == interface->dequeueOutputPackets(1, &m)) {
+        if (outputPacket(m, NULL) != kIOReturnOutputSuccess ||
+            ifq_is_oactive(&ifp->if_snd))
+            return kIOReturnNoResources;
+    }
+    return kIOReturnSuccess;
 }
 #endif
 

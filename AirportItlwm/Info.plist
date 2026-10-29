@@ -22,8 +22,6 @@
 	<dict>
 		<key>itlwm</key>
 		<dict>
-			<key>IOPCITunnelCompatible</key>
-			<true/>
 			<key>CFBundleIdentifier</key>
 			<string>com.zxystd.AirportItlwm</string>
 			<key>IOClass</key>

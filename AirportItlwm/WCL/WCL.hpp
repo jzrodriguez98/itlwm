@@ -290,20 +290,25 @@ inline TrafficCounters makeTrafficCounters(const uint64_t *tx, const uint64_t *r
 struct ScanTiming {
     uint32_t maxOutTU;
     bool fragmented;
+    uint32_t suspendTU;
 };
 
+// Off-channel timing for scans while associated, after Linux iwlwifi's scan
+// types: a 120 TU visit fits a whole passive dwell (110 TU), followed by 120 TU
+// back on the home channel. Passive dwells are split into short fragments
+// (44 TU out, 95 TU home) only when the caller asks for a short away time,
+// i.e. low latency. Splitting by default made each passive channel cost
+// ~0.8 s and full scans ~20 s. A 30 TU home time on quiet links (Linux's
+// lighter setting) coincided with firmware resets on AX210, so it is not used.
 inline ScanTiming scanTiming(uint32_t awayMilliseconds, bool associated,
                              bool supportsFragmentation)
 {
     if (!associated)
-        return {0, false};
-    if (!awayMilliseconds)
-        return {120, false};
+        return {0, false, 0};
     uint64_t requested = uint64_t(awayMilliseconds) * 1000 / 1024;
-    uint32_t minimum = supportsFragmentation ? 44 : 110;
-    uint32_t maxOut = requested < minimum ? minimum :
-        requested > 120 ? 120 : uint32_t(requested);
-    return {maxOut, maxOut < 110};
+    if (awayMilliseconds && requested < 100 && supportsFragmentation)
+        return {requested < 44 ? 44 : uint32_t(requested), true, 95};
+    return {120, false, 120};
 }
 
 inline uint16_t read16(const uint8_t *p) {

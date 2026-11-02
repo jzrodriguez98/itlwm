@@ -304,6 +304,8 @@ void		bus_dmamap_destroy(bus_dma_tag_t tag, bus_dmamap_t dmam);
 int		bus_dmamap_load(bus_dmamap_t map, mbuf_t m);
 UInt32 bus_dmamap_packet(bus_dmamap_t map, mbuf_t m, IOPhysicalSegment *segments, UInt32 count, bool receive);
 bool bus_dmamap_read(bus_dmamap_t map, mbuf_t m, size_t size);
+const void *bus_dmamap_rx_data(bus_dmamap_t map, size_t size);
+bool bus_dmamap_read_used(bus_dmamap_t map, mbuf_t m, size_t used, size_t size);
 bool bus_dmamap_write(bus_dmamap_t map, mbuf_t m);
 #define bus_dmamap_load_mbuf bus_dmamap_load
 

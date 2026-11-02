@@ -473,6 +473,7 @@ public:
             struct iwx_rx_mpdu_desc *, int, int, uint32_t,
             struct ieee80211_rxinfo *, struct mbuf_list *);
     int    iwx_rx_pkt_valid(struct iwx_rx_packet *);
+    size_t iwx_rx_buf_used(struct iwx_softc *, const uint8_t *);
     void    iwx_rx_pkt(struct iwx_softc *, struct iwx_rx_data *,
             struct mbuf_list *);
     void    iwx_notif_intr(struct iwx_softc *);

@@ -2292,15 +2292,26 @@ iwx_write_mem32(struct iwx_softc *sc, uint32_t addr, uint32_t val)
     return iwx_write_mem(sc, addr, &val, 1);
 }
 
+/*
+ * A register that reads as all ones means the device is not answering on
+ * the bus. That can happen briefly while the PCIe link comes back after
+ * resume, so an all-ones read never counts as success but polling goes on
+ * until the caller's timeout.
+ */
 int ItlIwx::
 iwx_poll_bit(struct iwx_softc *sc, int reg, uint32_t bits, uint32_t mask,
              int timo)
 {
+    uint32_t val;
+    
     for (;;) {
-        if ((IWX_READ(sc, reg) & mask) == (bits & mask)) {
+        val = IWX_READ(sc, reg);
+        if (val != 0xffffffff && (val & mask) == (bits & mask))
             return 1;
-        }
         if (timo < 10) {
+            if (val == 0xffffffff)
+                XYLog("%s: device not responding (reg 0x%x reads 0xffffffff)\n",
+                      DEVNAME(sc), reg);
             return 0;
         }
         timo -= 10;
@@ -8076,12 +8087,13 @@ iwx_umac_scan(struct iwx_softc *sc, int bgscan)
     struct iwx_scan_umac_chan_param *chanparam;
     size_t req_len;
     int err, async = bgscan;
-    const uint32_t timeout = bgscan ?  htole32(120) : htole32(0);
 #ifdef AIRPORT_WCL
     const auto timing = AirportWCL::scanTiming(ic->ic_wcl_scan_away_time_ms, bgscan,
         isset(sc->sc_ucode_api, IWX_UCODE_TLV_API_FRAGMENTED_SCAN));
+    const uint32_t timeout = htole32(timing.suspendTU);
     const uint32_t maxOut = htole32(timing.maxOutTU);
 #else
+    const uint32_t timeout = bgscan ?  htole32(120) : htole32(0);
     const uint32_t maxOut = timeout;
 #endif
     uint8_t scan_ver = iwx_lookup_cmd_ver(sc, IWX_LONG_GROUP, IWX_SCAN_REQ_UMAC);
@@ -8275,12 +8287,13 @@ iwx_umac_scan_v12(struct iwx_softc *sc, int bgscan)
     struct iwx_scan_req_umac_v12 *req;
     size_t req_len;
     uint16_t gen_flags = 0;
-    const uint32_t timeout = bgscan ?  htole32(120) : htole32(0);
 #ifdef AIRPORT_WCL
     const auto timing = AirportWCL::scanTiming(ic->ic_wcl_scan_away_time_ms, bgscan,
         isset(sc->sc_ucode_api, IWX_UCODE_TLV_API_FRAGMENTED_SCAN));
+    const uint32_t timeout = htole32(timing.suspendTU);
     const uint32_t maxOut = htole32(timing.maxOutTU);
 #else
+    const uint32_t timeout = bgscan ?  htole32(120) : htole32(0);
     const uint32_t maxOut = timeout;
 #endif
     struct iwx_scan_general_params_v10 *general_params;
@@ -8404,12 +8417,13 @@ iwx_umac_scan_v14(struct iwx_softc *sc, int bgscan)
     uint16_t gen_flags = 0;
     struct iwx_scan_general_params_v10 *general_params;
     struct iwx_scan_channel_params_v6 *cp;
-    const uint32_t timeout = bgscan ?  htole32(120) : htole32(0);
 #ifdef AIRPORT_WCL
     const auto timing = AirportWCL::scanTiming(ic->ic_wcl_scan_away_time_ms, bgscan,
         isset(sc->sc_ucode_api, IWX_UCODE_TLV_API_FRAGMENTED_SCAN));
+    const uint32_t timeout = htole32(timing.suspendTU);
     const uint32_t maxOut = htole32(timing.maxOutTU);
 #else
+    const uint32_t timeout = bgscan ?  htole32(120) : htole32(0);
     const uint32_t maxOut = timeout;
 #endif
     struct iwx_host_cmd hcmd = {
@@ -11393,6 +11407,32 @@ struct iwl_pnvm_init_complete_ntfy {
     uint32_t status;
 } __packed; /* PNVM_INIT_COMPLETE_NTFY_S_VER_1 */
 
+/*
+ * Number of bytes of an RX buffer that iwx_rx_pkt() will consume. Must
+ * stop exactly where the packet loop in iwx_rx_pkt() stops; the bytes
+ * after this point are zeroed instead of copied from the bounce buffer.
+ */
+size_t ItlIwx::
+iwx_rx_buf_used(struct iwx_softc *sc, const uint8_t *buf)
+{
+    struct iwx_rx_packet *pkt;
+    const size_t minsz = sizeof(pkt->len_n_flags) + sizeof(pkt->hdr);
+    uint32_t offset = 0, len;
+    
+    while (offset + minsz < IWX_RBUF_SIZE) {
+        pkt = (struct iwx_rx_packet *)(buf + offset);
+        if (!iwx_rx_pkt_valid(pkt))
+            break;
+        len = sizeof(pkt->len_n_flags) + iwx_rx_packet_len(pkt);
+        if (len < minsz || len > (IWX_RBUF_SIZE - offset))
+            break;
+        offset += roundup(len, IWX_FH_RSCSR_FRAME_ALIGN);
+        if (sc->sc_device_family >= IWX_DEVICE_FAMILY_AX210)
+            break;
+    }
+    return MIN(offset, IWX_RBUF_SIZE);
+}
+
 void ItlIwx::
 iwx_rx_pkt(struct iwx_softc *sc, struct iwx_rx_data *data, struct mbuf_list *ml)
 {
@@ -11406,7 +11446,15 @@ iwx_rx_pkt(struct iwx_softc *sc, struct iwx_rx_data *data, struct mbuf_list *ml)
     //    bus_dmamap_sync(sc->sc_dmat, data->map, 0, IWX_RBUF_SIZE,
     //        BUS_DMASYNC_POSTREAD);
     
-    if (!bus_dmamap_read(data->map, data->m, IWX_RBUF_SIZE)) {
+    const uint8_t *rxbuf = (const uint8_t *)bus_dmamap_rx_data(data->map, IWX_RBUF_SIZE);
+    if (rxbuf) {
+        /* Copy only the packets the firmware wrote, zero the rest. */
+        if (!bus_dmamap_read_used(data->map, data->m,
+            iwx_rx_buf_used(sc, rxbuf), IWX_RBUF_SIZE)) {
+            ifp->netStat->inputErrors++;
+            return;
+        }
+    } else if (!bus_dmamap_read(data->map, data->m, IWX_RBUF_SIZE)) {
         ifp->netStat->inputErrors++;
         return;
     }

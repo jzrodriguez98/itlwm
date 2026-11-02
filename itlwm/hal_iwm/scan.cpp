@@ -418,6 +418,7 @@ iwm_lmac_scan(struct iwm_softc *sc, int bgscan)
     }
 #ifdef AIRPORT_WCL
     req->max_out_time = htole32(timing.maxOutTU);
+    req->suspend_time = htole32(timing.suspendTU);
 #endif
     req->scan_prio = htole32(IWM_SCAN_PRIORITY_HIGH);
     req->rx_chain_select = iwm_scan_rx_chain(sc);
@@ -715,10 +716,11 @@ iwm_umac_scan(struct iwm_softc *sc, int bgscan)
     }
     
     if (bgscan) {
-        const uint32_t timeout = htole32(120);
 #ifdef AIRPORT_WCL
+        const uint32_t timeout = htole32(timing.suspendTU);
         const uint32_t maxOut = htole32(timing.maxOutTU);
 #else
+        const uint32_t timeout = htole32(120);
         const uint32_t maxOut = timeout;
 #endif
         if (isset(sc->sc_ucode_api,

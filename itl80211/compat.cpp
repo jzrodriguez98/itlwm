@@ -373,6 +373,40 @@ bool bus_dmamap_read(bus_dmamap_t map, mbuf_t m, size_t size)
     return true;
 }
 
+/*
+ * Returns the bounce buffer the device wrote into, so the caller can find
+ * how much of it holds packets before copying. Returns NULL when the device
+ * DMAs straight into the mbuf (no bounce buffer, nothing to copy).
+ */
+const void *bus_dmamap_rx_data(bus_dmamap_t map, size_t size)
+{
+#ifdef AIRPORT_VTD
+    if (!map || !map->dma.arena || size > map->dma.size)
+        return NULL;
+    OSSynchronizeIO();
+    return map->dma.vaddr;
+#else
+    return NULL;
+#endif
+}
+
+/*
+ * Like bus_dmamap_read(), but copies only the first 'used' bytes and zeroes
+ * the rest of the mbuf up to 'size', so stale bytes left in a recycled mbuf
+ * can never be parsed as packets.
+ */
+bool bus_dmamap_read_used(bus_dmamap_t map, mbuf_t m, size_t used, size_t size)
+{
+#ifdef AIRPORT_VTD
+    if (!map || !map->dma.arena || !m || used > size || size > map->dma.size || mbuf_next(m) || mbuf_len(m) < size)
+        return false;
+    OSSynchronizeIO();
+    memcpy(mbuf_data(m), map->dma.vaddr, used);
+    bzero((uint8_t *)mbuf_data(m) + used, size - used);
+#endif
+    return true;
+}
+
 bool bus_dmamap_write(bus_dmamap_t map, mbuf_t m)
 {
 #ifdef AIRPORT_VTD

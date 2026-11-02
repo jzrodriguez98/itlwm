@@ -515,6 +515,13 @@ bool AirportItlwm::createWorkQueue()
     return _fWorkloop != 0;
 }
 
+#ifdef AIRPORT_WCL
+IOWorkLoop *AirportItlwm::getWorkLoop() const
+{
+    return _fWorkloop;
+}
+#endif
+
 IO80211WorkQueue *AirportItlwm::getWorkQueue()
 #ifdef AIRPORT_WCL
 const
@@ -569,7 +576,14 @@ bool AirportItlwm::configureInterface(IONetworkInterface *netif)
     ether_ifattach(ifp, OSDynamicCast(IOEthernetInterface, netif));
     fpNetStats->collisions = 0;
 #ifdef __PRIVATE_SPI__
+#ifdef AIRPORT_WCL
+    if (netif->configureOutputPullModel(fHalService->getDriverInfo()->getTxQueueSize(),
+        kIONetworkWorkLoopSynchronous, 0,
+        IOEthernetInterface::kOutputPacketSchedulingModelNormal, 0) != kIOReturnSuccess)
+        return false;
+#else
     netif->configureOutputPullModel(fHalService->getDriverInfo()->getTxQueueSize(), 0, 0, IOEthernetInterface::kOutputPacketSchedulingModelNormal, 0);
+#endif
 #endif
 
     return true;
@@ -680,6 +694,29 @@ IOReturn AirportItlwm::outputStart(IONetworkInterface *interface, IOOptionBits o
 {
     struct _ifnet *ifp = &fHalService->get80211Controller()->ic_ac.ac_if;
     mbuf_t m = NULL;
+#ifdef AIRPORT_WCL
+    if (!ifp->if_snd.queue)
+        return kIOReturnNoResources;
+    if (!ifq_empty(&ifp->if_snd))
+        (*ifp->if_start)(ifp);
+    const uint32_t capacity = ifp->if_snd.queue->getCapacity();
+    const uint32_t queued = ifq_len(&ifp->if_snd);
+    if (ifq_is_oactive(&ifp->if_snd) || queued >= capacity)
+        return kIOReturnNoResources;
+    const uint32_t count = MIN(32U, capacity - queued);
+    if (interface->dequeueOutputPackets(count, &m) != kIOReturnSuccess || !m)
+        return kIOReturnSuccess;
+    while (m) {
+        mbuf_t next = mbuf_nextpkt(m);
+        mbuf_setnextpkt(m, NULL);
+        enqueuePacket(m);
+        m = next;
+    }
+    (*ifp->if_start)(ifp);
+    if (ifq_is_oactive(&ifp->if_snd))
+        return kIOReturnNoResources;
+    return kIOReturnSuccess;
+#else
     if (ifq_is_oactive(&ifp->if_snd))
         return kIOReturnNoResources;
     while (kIOReturnSuccess == interface->dequeueOutputPackets(1, &m)) {
@@ -688,6 +725,7 @@ IOReturn AirportItlwm::outputStart(IONetworkInterface *interface, IOOptionBits o
             return kIOReturnNoResources;
     }
     return kIOReturnSuccess;
+#endif
 }
 
 IOReturn AirportItlwm::networkInterfaceNotification(
@@ -703,35 +741,43 @@ IOReturn AirportItlwm::networkInterfaceNotification(
 extern const char* hexdump(uint8_t *buf, size_t len);
 
 #ifdef AIRPORT_WCL
-UInt32 AirportItlwm::outputPacket(mbuf_t m, void *param)
-{
-//    XYLog("%s\n", __FUNCTION__);
-    IOReturn ret = kIOReturnOutputSuccess;
-    struct _ifnet *ifp = &fHalService->get80211Controller()->ic_ac.ac_if;
+    UInt32 AirportItlwm::outputPacket(mbuf_t m, void *param)
+    {
+        IOReturn status = _fCommandGate ? _fCommandGate->runAction(outputPacketGated, m) : kIOReturnNotReady;
+        if (status != kIOReturnOutputSuccess && status != kIOReturnOutputDropped) {
+            if (m && mbuf_type(m) != MBUF_TYPE_FREE)
+                freePacket(m);
+            return kIOReturnOutputDropped;
+        }
+        return status;
+    }
 
-    if (fHalService->get80211Controller()->ic_state != IEEE80211_S_RUN || ifp->if_snd.queue == NULL) {
+    IOReturn AirportItlwm::outputPacketGated(OSObject *owner, void *arg0, void *, void *, void *)
+    {
+        auto self = static_cast<AirportItlwm *>(owner);
+        UInt32 status = self->enqueuePacket(static_cast<mbuf_t>(arg0));
+        auto ifp = &self->fHalService->get80211Controller()->ic_ac.ac_if;
+        if (ifp->if_snd.queue)
+            (*ifp->if_start)(ifp);
+        return status;
+    }
+
+    UInt32 AirportItlwm::enqueuePacket(mbuf_t m)
+    {
+        auto ic = fHalService->get80211Controller();
+        auto ifp = &ic->ic_ac.ac_if;
+        if (ic->ic_state == IEEE80211_S_RUN && ifp->if_snd.queue &&
+            m && mbuf_type(m) != MBUF_TYPE_FREE && (mbuf_flags(m) & MBUF_PKTHDR) &&
+            ifp->if_snd.queue->lockEnqueue(m))
+            return kIOReturnOutputSuccess;
+        if (ifp->netStat)
+            ++ifp->netStat->outputErrors;
         if (m && mbuf_type(m) != MBUF_TYPE_FREE)
             freePacket(m);
         return kIOReturnOutputDropped;
     }
-    if (!m || mbuf_type(m) == MBUF_TYPE_FREE) {
-        ifp->netStat->outputErrors++;
-        return kIOReturnOutputDropped;
-    }
-    if (!(mbuf_flags(m) & MBUF_PKTHDR)) {
-        ifp->netStat->outputErrors++;
-        freePacket(m);
-        return kIOReturnOutputDropped;
-    }
-    if (!ifp->if_snd.queue->lockEnqueue(m)) {
-        freePacket(m);
-        ret = kIOReturnOutputDropped;
-    }
-    (*ifp->if_start)(ifp);
-    return ret;
-}
-#else
-UInt32 AirportItlwm::outputPacket(mbuf_t m, void *param)
+    #else
+    UInt32 AirportItlwm::outputPacket(mbuf_t m, void *param)
 {
 //    XYLog("%s\n", __FUNCTION__);
     IOReturn ret = kIOReturnOutputSuccess;

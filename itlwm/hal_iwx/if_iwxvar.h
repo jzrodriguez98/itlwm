@@ -110,6 +110,7 @@
 
 #include <IOKit/network/IOMbufMemoryCursor.h>
 #include <IOKit/IODMACommand.h>
+#include <HAL/ItlTx.hpp>
 
 #define IWL_CFG_ANY (~0)
 
@@ -626,9 +627,9 @@ struct iwx_softc {
 	int sc_msix;
 
 	/* TX/RX rings. */
-	struct iwx_tx_ring txq[IWX_MAX_TVQM_QUEUES];
-	struct iwx_rx_ring rxq;
-	int qfullmsk;
+    struct iwx_tx_ring txq[IWX_MAX_TVQM_QUEUES];
+    struct iwx_rx_ring rxq;
+    ItlQueueMask<IWX_MAX_TVQM_QUEUES> qfullmsk;
     struct iwx_tx_ring sc_tvqm_ring;
     int first_data_qid;
 

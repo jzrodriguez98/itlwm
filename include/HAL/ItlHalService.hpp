@@ -46,6 +46,9 @@ public:
     virtual IOReturn disable(IONetworkInterface *interface) = 0;
     
     virtual struct ieee80211com *get80211Controller() = 0;
+#ifdef AIRPORT_WCL
+    virtual IOReturn setScanHomeAwayTime(uint32_t) { return kIOReturnUnsupported; }
+#endif
     
     virtual ItlDriverInfo *getDriverInfo() = 0;
     

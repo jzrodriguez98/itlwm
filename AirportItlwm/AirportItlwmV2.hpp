@@ -98,6 +98,10 @@ public:
     virtual IONetworkInterface * createInterface() override;
     virtual bool configureInterface(IONetworkInterface *netif) override;
     virtual UInt32 outputPacket(mbuf_t, void * param) override;
+#ifdef AIRPORT_WCL
+    UInt32 enqueuePacket(mbuf_t);
+    static IOReturn outputPacketGated(OSObject *, void *, void *, void *, void *);
+#endif
 #ifdef __PRIVATE_SPI__
     virtual IOReturn outputStart(IONetworkInterface *interface, IOOptionBits options) override;
     virtual IOReturn networkInterfaceNotification(
@@ -119,6 +123,7 @@ public:
     bool initCCLogs();
     
     #ifdef AIRPORT_WCL
+    virtual IOWorkLoop *getWorkLoop() const override;
     virtual IO80211WorkQueue *getWorkQueue() const override;
     virtual CCLogStream *getLogger() const override { return driverLogger; }
     CCLogStream *driverLogger;

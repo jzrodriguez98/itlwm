@@ -3528,6 +3528,10 @@ iwn_tx(struct iwn_softc *sc, mbuf_t m, struct ieee80211_node *ni)
     wh = mtod(m, struct ieee80211_frame *);
     type = wh->i_fc[0] & IEEE80211_FC0_TYPE_MASK;
     subtype = wh->i_fc[0] & IEEE80211_FC0_SUBTYPE_MASK;
+#ifdef AIRPORT_WCL
+    const int trafficAC = ieee80211_has_qos(wh) ?
+        ieee80211_wcl_ac(ieee80211_get_qos(wh) & IEEE80211_QOS_TID) : EDCA_AC_BE;
+#endif
     if (type == IEEE80211_FC0_TYPE_CTL)
         hdrlen = sizeof(struct ieee80211_frame_min);
     else
@@ -3857,6 +3861,10 @@ iwn_tx(struct iwn_softc *sc, mbuf_t m, struct ieee80211_node *ni)
         sc->qfullmsk |= 1 << ring->qid;
     }
 
+#ifdef AIRPORT_WCL
+    if (type == IEEE80211_FC0_TYPE_DATA && !(subtype & IEEE80211_FC0_SUBTYPE_NODATA))
+        ++ic->ic_wcl_tx_packets[trafficAC];
+#endif
     return 0;
 }
 
@@ -3865,7 +3873,11 @@ iwn_start(struct _ifnet *ifp)
 {
     struct iwn_softc *sc = (struct iwn_softc*)ifp->if_softc;
     ItlIwn *that = container_of(sc, ItlIwn, com);
+#ifdef AIRPORT_WCL
+    that->getMainCommandGate()->runAction(_iwn_start_task, &that->com.sc_ic.ic_ac.ac_if);
+#else
     that->getMainCommandGate()->attemptAction(_iwn_start_task, &that->com.sc_ic.ic_ac.ac_if);
+#endif
 }
 
 IOReturn ItlIwn::

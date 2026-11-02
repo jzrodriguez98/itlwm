@@ -153,6 +153,12 @@ public:
     IOReturn enable(IONetworkInterface *netif) override;
     IOReturn disable(IONetworkInterface *netif) override;
     virtual struct ieee80211com *get80211Controller() override;
+#ifdef AIRPORT_WCL
+    IOReturn setScanHomeAwayTime(uint32_t milliseconds) override {
+        com.sc_ic.ic_wcl_scan_away_time_ms = milliseconds;
+        return kIOReturnSuccess;
+    }
+#endif
     
     static bool intrFilter(OSObject *object, IOFilterInterruptEventSource *src);
     static IOReturn _iwx_start_task(OSObject *target, void *arg0, void *arg1, void *arg2, void *arg3);
@@ -467,6 +473,7 @@ public:
             struct iwx_rx_mpdu_desc *, int, int, uint32_t,
             struct ieee80211_rxinfo *, struct mbuf_list *);
     int    iwx_rx_pkt_valid(struct iwx_rx_packet *);
+    size_t iwx_rx_buf_used(struct iwx_softc *, const uint8_t *);
     void    iwx_rx_pkt(struct iwx_softc *, struct iwx_rx_data *,
             struct mbuf_list *);
     void    iwx_notif_intr(struct iwx_softc *);

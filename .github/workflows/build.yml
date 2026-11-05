@@ -1,102 +1,98 @@
-name: Build itlwm and AirportItlwm
+name: Build itlwm (HeliPort) and AirportItlwm (Sequoia, Tahoe)
 
 on:
   workflow_dispatch:
 
-permissions:
-  contents: read
-
-concurrency:
-  group: build-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: false
+env:
+  # Same MacKernelSDK commit laobamac pins.
+  MACKERNELSDK_REF: 3f750085caa17ec3a7880f11c11bf4f48cd6a164
 
 jobs:
-  build:
-    name: ${{ matrix.scheme }} (${{ matrix.configuration }})
+  itlwm:
+    name: itlwm HeliPort (${{ matrix.configuration }})
     runs-on: macos-15-intel
     strategy:
       fail-fast: false
       matrix:
-        scheme: [itlwm, AirportItlwm-Sequoia, AirportItlwm-Tahoe]
         configuration: [Debug, Release]
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Install MacKernelSDK
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+      - name: Install MacKernelSDK (pinned)
+        uses: actions/checkout@v6
         with:
           repository: acidanthera/MacKernelSDK
-          ref: 3f750085caa17ec3a7880f11c11bf4f48cd6a164
+          ref: ${{ env.MACKERNELSDK_REF }}
           path: MacKernelSDK
-
-      - name: Build ${{ matrix.scheme }}
+      - name: Build itlwm.kext
         env:
-          SCHEME: ${{ matrix.scheme }}
           CONFIGURATION: ${{ matrix.configuration }}
         run: |
           set -euo pipefail
           mkdir -p logs
-          xcodebuild -project itlwm.xcodeproj \
-            -scheme "$SCHEME" \
-            -configuration "$CONFIGURATION" \
-            -jobs 3 ARCHS=x86_64 \
-            SYMROOT="$PWD/build/products" \
-            OBJROOT="$PWD/build/obj" \
+          xcodebuild -project itlwm.xcodeproj -scheme itlwm \
+            -configuration "$CONFIGURATION" -jobs 3 ARCHS=x86_64 \
+            SYMROOT="$PWD/build/products" OBJROOT="$PWD/build/obj" \
             CODE_SIGNING_ALLOWED=NO \
-            GIT_COMMIT="_$(git rev-parse --short HEAD)" \
-            build > "logs/$SCHEME-$CONFIGURATION.log" 2>&1 || {
-              tail -100 "logs/$SCHEME-$CONFIGURATION.log"
-              exit 1
-            }
-
-      - name: Package kext
+            build > logs/itlwm.log 2>&1 || { tail -100 logs/itlwm.log; exit 1; }
+      - name: Package
         env:
-          SCHEME: ${{ matrix.scheme }}
           CONFIGURATION: ${{ matrix.configuration }}
         run: |
-          set -euo pipefail
           mkdir -p artifacts
-          case "$SCHEME" in
-            itlwm)
-              kext_name=itlwm.kext
-              ;;
-            AirportItlwm-Sequoia|AirportItlwm-Tahoe)
-              kext_name=AirportItlwm.kext
-              ;;
-            *)
-              echo "Unexpected scheme: $SCHEME" >&2
-              exit 1
-              ;;
-          esac
-
-          products="$PWD/build/products/$CONFIGURATION"
-          kext_path=$(find "$products" -type d -name "$kext_name" -print -quit)
-          if [[ -z "$kext_path" ]]; then
-            echo "Could not find $kext_name under $products" >&2
-            find "$products" -maxdepth 4 -print >&2 || true
-            exit 1
-          fi
-
-          version=$(awk '/MODULE_VERSION =/ {gsub(/;/, "", $3); print $3; exit}' itlwm.xcodeproj/project.pbxproj)
-          short_sha=$(git rev-parse --short HEAD)
-          configuration=$(printf '%s' "$CONFIGURATION" | tr '[:lower:]' '[:upper:]')
-          archive="artifacts/${SCHEME}-v${version}-${configuration}-${short_sha}.zip"
-          ditto -c -k --keepParent "$kext_path" "$archive"
-
-      - name: Upload kext artifact
-        uses: actions/upload-artifact@v4
+          ditto -c -k --keepParent "build/products/$CONFIGURATION/itlwm.kext" "artifacts/itlwm-$CONFIGURATION.zip"
+      - uses: actions/upload-artifact@v7
         with:
-          name: ${{ matrix.scheme }}-${{ matrix.configuration }}
+          name: itlwm-${{ matrix.configuration }}
           path: artifacts/*.zip
           if-no-files-found: error
-
-      - name: Upload build log
+      - uses: actions/upload-artifact@v7
         if: always()
-        uses: actions/upload-artifact@v4
         with:
-          name: logs-${{ matrix.scheme }}-${{ matrix.configuration }}
+          name: build-logs-itlwm-${{ matrix.configuration }}
+          path: logs
+
+  airport:
+    name: AirportItlwm ${{ matrix.platform }} (${{ matrix.configuration }})
+    runs-on: macos-15-intel
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [Sequoia, Tahoe]
+        configuration: [Debug, Release]
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install MacKernelSDK (pinned)
+        uses: actions/checkout@v6
+        with:
+          repository: acidanthera/MacKernelSDK
+          ref: ${{ env.MACKERNELSDK_REF }}
+          path: MacKernelSDK
+      - name: Build AirportItlwm
+        env:
+          CONFIGURATION: ${{ matrix.configuration }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+          mkdir -p logs
+          xcodebuild -project itlwm.xcodeproj -scheme "AirportItlwm-$PLATFORM" \
+            -configuration "$CONFIGURATION" -jobs 3 ARCHS=x86_64 \
+            SYMROOT="$PWD/build/products" OBJROOT="$PWD/build/obj" \
+            CODE_SIGNING_ALLOWED=NO GIT_COMMIT="_$(git rev-parse --short HEAD)" \
+            build > "logs/AirportItlwm-$PLATFORM.log" 2>&1 || { tail -100 "logs/AirportItlwm-$PLATFORM.log"; exit 1; }
+      - name: Package
+        env:
+          CONFIGURATION: ${{ matrix.configuration }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          mkdir -p artifacts
+          ditto -c -k --keepParent "build/products/$CONFIGURATION/$PLATFORM/AirportItlwm.kext" "artifacts/AirportItlwm-$PLATFORM-$CONFIGURATION.zip"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: AirportItlwm-${{ matrix.platform }}-${{ matrix.configuration }}
+          path: artifacts/*.zip
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: build-logs-${{ matrix.platform }}-${{ matrix.configuration }}
           path: logs

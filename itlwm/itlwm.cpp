@@ -586,7 +586,7 @@ IOReturn itlwm::outputStart(IONetworkInterface *interface, IOOptionBits options)
     if (ifq_is_oactive(&ifp->if_snd))
         return kIOReturnNoResources;
     while (kIOReturnSuccess == interface->dequeueOutputPackets(1, &m)) {
-        if (outputPacket(m, NULL)!= kIOReturnOutputSuccess ||
+        if (outputPacket(m, NULL) != kIOReturnOutputSuccess ||
             ifq_is_oactive(&ifp->if_snd))
             return kIOReturnNoResources;
     }
@@ -596,38 +596,25 @@ IOReturn itlwm::outputStart(IONetworkInterface *interface, IOOptionBits options)
 
 UInt32 itlwm::outputPacket(mbuf_t m, void *param)
 {
-//    XYLog("%s\n", __FUNCTION__);
-    IOReturn ret = kIOReturnOutputSuccess;
-    _ifnet *ifp = &fHalService->get80211Controller()->ic_ac.ac_if;
-
-    if (fHalService->get80211Controller()->ic_state != IEEE80211_S_RUN || ifp->if_snd.queue == NULL) {
-        if (m && mbuf_type(m) != MBUF_TYPE_FREE) {
+    struct ieee80211com *ic = fHalService->get80211Controller();
+    struct _ifnet *ifp = &ic->ic_ac.ac_if;
+    if (ic->ic_state != IEEE80211_S_RUN ||
+        !ifp->if_snd.queue ||
+        !m ||
+        mbuf_type(m) == MBUF_TYPE_FREE ||
+        !(mbuf_flags(m) & MBUF_PKTHDR)) {
+        if (m && mbuf_type(m) != MBUF_TYPE_FREE)
             freePacket(m);
-        }
         return kIOReturnOutputDropped;
     }
-    if (m == NULL) {
-        XYLog("%s m==NULL!!\n", __FUNCTION__);
-        ifp->netStat->outputErrors++;
-        ret = kIOReturnOutputDropped;
-    }
-    if (!(mbuf_flags(m) & MBUF_PKTHDR) ){
-        XYLog("%s pkthdr is NULL!!\n", __FUNCTION__);
-        ifp->netStat->outputErrors++;
-        freePacket(m);
-        ret = kIOReturnOutputDropped;
-    }
-    if (mbuf_type(m) == MBUF_TYPE_FREE) {
-        XYLog("%s mbuf is FREE!!\n", __FUNCTION__);
-        ifp->netStat->outputErrors++;
-        ret = kIOReturnOutputDropped;
-    }
     if (!ifp->if_snd.queue->lockEnqueue(m)) {
+        if (ifp->netStat)
+            ++ifp->netStat->outputErrors;
         freePacket(m);
-        ret = kIOReturnOutputDropped;
+        return kIOReturnOutputDropped;
     }
     (*ifp->if_start)(ifp);
-    return ret;
+    return kIOReturnOutputSuccess;
 }
 
 UInt32 itlwm::getFeatures() const

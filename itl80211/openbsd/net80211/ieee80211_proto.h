@@ -189,6 +189,7 @@ extern	void ieee80211_ht_negotiate(struct ieee80211com *,
     struct ieee80211_node *);
 extern  void ieee80211_vht_negotiate(struct ieee80211com *,
     struct ieee80211_node *);
+extern int ieee80211_he_supported(struct ieee80211com *, struct ieee80211_node *);
 extern  void ieee80211_he_negotiate(struct ieee80211com *,
     struct ieee80211_node *);
 extern  void ieee80211_sta_set_rx_nss(struct ieee80211com *, struct ieee80211_node *);

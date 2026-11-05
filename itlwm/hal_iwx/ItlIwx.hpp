@@ -153,6 +153,12 @@ public:
     IOReturn enable(IONetworkInterface *netif) override;
     IOReturn disable(IONetworkInterface *netif) override;
     virtual struct ieee80211com *get80211Controller() override;
+#ifdef AIRPORT_WCL
+    IOReturn setScanHomeAwayTime(uint32_t milliseconds) override {
+        com.sc_ic.ic_wcl_scan_away_time_ms = milliseconds;
+        return kIOReturnSuccess;
+    }
+#endif
     
     static bool intrFilter(OSObject *object, IOFilterInterruptEventSource *src);
     static IOReturn _iwx_start_task(OSObject *target, void *arg0, void *arg1, void *arg2, void *arg3);
@@ -185,25 +191,6 @@ public:
     
     void releaseAll();
     void joinSSID(const char *ssid, const char *pwd);
-
-    /* Tahoe AppleVTD / AX210 prepared packet DMA backing. */
-    enum { kAppleVTDTxCount = 1024, kAppleVTDTxSize = 8192 };
-    enum { AppleVTDTxFree = 0, AppleVTDTxCopying = 1,
-           AppleVTDTxInflight = 2, AppleVTDTxQuarantined = 3 };
-    struct AppleVTDTxBacking {
-        struct iwx_dma_info dma;
-        struct iwx_tx_data *owner;
-        uint32_t state;
-    };
-    AppleVTDTxBacking fAppleVTDTx[kAppleVTDTxCount] = {};
-    uint32_t fAppleVTDTxNext = 0;
-    bool fAppleVTDTxReady = false;
-    IOLock *fAppleVTDTxLock = NULL;
-    bool applevtdTxAllocate();
-    int applevtdTxPrepare(struct iwx_tx_data *, mbuf_t, IOPhysicalSegment *, unsigned);
-    void applevtdTxRetire(struct iwx_tx_data *, bool normal);
-    void applevtdTxResetQuarantine();
-    void applevtdTxFree();
     
     //utils
     static void *mallocarray(size_t, size_t, int, int);
@@ -304,6 +291,7 @@ public:
     void    iwx_setup_ht_rates(struct iwx_softc *);
     void    iwx_setup_vht_rates(struct iwx_softc *);
     void    iwx_setup_he_rates(struct iwx_softc *);
+    int     iwx_config_he_sta(struct iwx_softc *, struct ieee80211_node *);
     int    iwx_mimo_enabled(struct iwx_softc *);
     static void    iwx_mac_ctxt_task(void *);
     static void    iwx_chan_ctxt_task(void *);
@@ -321,7 +309,7 @@ public:
     static void    iwx_rx_ba_session_expired(void *);
     static void    iwx_reorder_timer_expired(void *);
     static void    iwx_update_chw(struct ieee80211com *);
-    void    iwx_sta_rx_agg(struct iwx_softc *, struct ieee80211_node *, uint8_t,
+    int     iwx_sta_rx_agg(struct iwx_softc *, struct ieee80211_node *, uint8_t,
                            uint16_t, uint16_t, int, int);
     static int    iwx_ampdu_tx_start(struct ieee80211com *, struct ieee80211_node *,
             uint8_t);
@@ -373,6 +361,7 @@ public:
     int    iwx_phy_ctxt_cmd(struct iwx_softc *, struct iwx_phy_ctxt *, uint8_t,
             uint8_t, uint32_t, uint32_t);
     int    iwx_send_cmd(struct iwx_softc *, struct iwx_host_cmd *);
+    int    iwx_wait_notification(struct iwx_softc *, int *, int, uint32_t);
     int    iwx_send_cmd_pdu(struct iwx_softc *, uint32_t, uint32_t, uint16_t,
             const void *);
     int    iwx_send_cmd_status(struct iwx_softc *, struct iwx_host_cmd *,
@@ -484,6 +473,7 @@ public:
             struct iwx_rx_mpdu_desc *, int, int, uint32_t,
             struct ieee80211_rxinfo *, struct mbuf_list *);
     int    iwx_rx_pkt_valid(struct iwx_rx_packet *);
+    size_t iwx_rx_buf_used(struct iwx_softc *, const uint8_t *);
     void    iwx_rx_pkt(struct iwx_softc *, struct iwx_rx_data *,
             struct mbuf_list *);
     void    iwx_notif_intr(struct iwx_softc *);

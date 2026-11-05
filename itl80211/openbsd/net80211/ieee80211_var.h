@@ -438,8 +438,22 @@ struct ieee80211com {
 	int			(*ic_bgscan_start)(struct ieee80211com *);
     /* The channel width has changed (20<->2040) */
     void            (*ic_update_chw)(struct ieee80211com *);
+#ifdef AIRPORT_WCL
+    bool ic_wcl_mac_reconfig;
+    bool ic_wcl_enterprise;
+    bool ic_wcl_join_requested;
+    bool ic_wcl_scan_requested;
+    bool ic_wcl_scan_active;
+    uint8_t ic_wcl_scan_ssid_length;
+    uint8_t ic_wcl_scan_ssid[32];
+    bool ic_wcl_scan_restricted;
+    uint8_t ic_wcl_scan_channels[32];
+    uint32_t ic_wcl_scan_away_time_ms;
+    uint64_t ic_wcl_tx_packets[4];
+    uint64_t ic_wcl_rx_packets[4];
+#endif
     void            (*ic_event_handler)(struct ieee80211com *, int, void *);
-	CTimeout*		ic_bgscan_timeout;
+    CTimeout*        ic_bgscan_timeout;
 	uint32_t		ic_bgscan_fail;
 	u_int8_t		ic_myaddr[IEEE80211_ADDR_LEN];
 	struct ieee80211_rateset ic_sup_rates[IEEE80211_MODE_MAX];
@@ -568,8 +582,19 @@ struct ieee80211com {
     
 	TAILQ_HEAD(, ieee80211_ess)	 ic_ess;
 };
-#define	ic_if		ic_ac.ac_if
-#define	ic_softc	ic_if.if_softc
+#define    ic_if        ic_ac.ac_if
+#define    ic_softc    ic_if.if_softc
+
+#ifdef AIRPORT_WCL
+static inline unsigned ieee80211_wcl_ac(unsigned tid)
+{
+    static const unsigned categories[8] = {
+        EDCA_AC_BE, EDCA_AC_BK, EDCA_AC_BK, EDCA_AC_BE,
+        EDCA_AC_VI, EDCA_AC_VI, EDCA_AC_VO, EDCA_AC_VO
+    };
+    return tid < 8 ? categories[tid] : EDCA_AC_BE;
+}
+#endif
 
 /* list of APs we want to automatically use */
 /* all data is copied from struct ieee80211com */
@@ -651,6 +676,7 @@ struct ieee80211_ess {
 #define IEEE80211_C_TX_AMPDU_SETUP_IN_HW 0x00040000 /* CAPABILITY: BA negotiation in HW */
 #define IEEE80211_C_SUPPORTS_VHT_EXT_NSS_BW 0x00080000  /* CAPABILITY: for 160mhz */
 #define IEEE80211_C_TX_AMPDU_SETUP_IN_RS 0x00100000
+#define IEEE80211_C_HE 0x00200000 /* CAPABILITY: initialized HE support */
 
 /* flags for ieee80211_fix_rate() */
 #define	IEEE80211_F_DOSORT	0x00000001	/* sort rate list */
@@ -662,6 +688,20 @@ struct ieee80211_ess {
 #define IEEE80211_EVT_STA_DEAUTH                2
 #define IEEE80211_EVT_COUNTRY_CODE_UPDATE       3
 #define IEEE80211_EVT_SCAN_DONE                 4
+#ifdef AIRPORT_WCL
+#define IEEE80211_EVT_BEACON 5
+#define IEEE80211_EVT_DRIVER_READY 6
+#define IEEE80211_EVT_DRIVER_STOPPED 7
+#define IEEE80211_EVT_DRIVER_RESET_BEGIN 8
+struct ieee80211_beacon_event {
+    const struct ieee80211_node *node;
+    const uint8_t *ies;
+    size_t length;
+    const uint8_t *frame;
+    size_t frame_length;
+};
+#endif
+
 
 void	ieee80211_ifattach(struct _ifnet *, IOEthernetController *controller);
 void	ieee80211_ifdetach(struct _ifnet *);

@@ -41,9 +41,30 @@ public:
     void free() override;
     virtual bool attach(IOPCIDevice *device) override;
     virtual void detach(IOPCIDevice *device) override;
+#if defined(AIRPORT_VTD) && defined(AIRPORT_WCL)
+    bool inRateControlGate() {
+        return getMainWorkLoop()->inGate();
+    }
+
+    template <typename Action>
+    IOReturn runRateControlAction(Action action) {
+        if (inRateControlGate())
+            return action();
+        return getMainCommandGate()->runAction(
+            [](OSObject *, void *arg0, void *, void *, void *) -> IOReturn {
+                return (*static_cast<Action *>(arg0))();
+            }, &action);
+    }
+#endif
     IOReturn enable(IONetworkInterface *netif) override;
     IOReturn disable(IONetworkInterface *netif) override;
     virtual struct ieee80211com *get80211Controller() override;
+#ifdef AIRPORT_WCL
+    IOReturn setScanHomeAwayTime(uint32_t milliseconds) override {
+        com.sc_ic.ic_wcl_scan_away_time_ms = milliseconds;
+        return kIOReturnSuccess;
+    }
+#endif
     
     static bool intrFilter(OSObject *object, IOFilterInterruptEventSource *src);
     static IOReturn _iwm_start_task(OSObject *target, void *arg0, void *arg1, void *arg2, void *arg3);

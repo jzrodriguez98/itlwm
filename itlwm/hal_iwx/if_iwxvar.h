@@ -110,6 +110,7 @@
 
 #include <IOKit/network/IOMbufMemoryCursor.h>
 #include <IOKit/IODMACommand.h>
+#include <HAL/ItlTx.hpp>
 
 #define IWL_CFG_ANY (~0)
 
@@ -320,6 +321,9 @@ struct iwx_host_cmd {
  */
 
 struct iwx_dma_info {
+#ifdef AIRPORT_VTD
+    ItlDmaBuffer mapping;
+#endif
 	IOBufferMemoryDescriptor* buffer;
     bus_addr_t        paddr;
     void             *vaddr;
@@ -331,13 +335,12 @@ struct iwx_dma_info {
 struct iwx_tx_data {
 	bus_dmamap_t	map;
 	bus_addr_t	cmd_paddr;
-	/* Tahoe AppleVTD: non-inline AX210 TX payload uses prepared backing. */
-	uint16_t applevtd_token;
-	struct iwx_dma_info applevtd_cmd_dma;
 	mbuf_t m;
 	struct iwx_node *in;
     int flags;
 #define IWX_TXDATA_FLAG_CMD_IS_NARROW  0x01
+#define IWX_TXDATA_FLAG_CMD_PENDING    0x02
+#define IWX_TXDATA_FLAG_CMD_WAITING    0x04
     uint8_t type;
 };
 
@@ -364,8 +367,6 @@ struct iwx_tx_ring {
 struct iwx_rx_data {
 	mbuf_t m;
 	bus_dmamap_t	map;
-	/* Tahoe AppleVTD: AX210 hardware owns this prepared DMA backing. */
-	struct iwx_dma_info applevtd_dma;
 };
 
 struct iwx_rx_ring {
@@ -626,9 +627,9 @@ struct iwx_softc {
 	int sc_msix;
 
 	/* TX/RX rings. */
-	struct iwx_tx_ring txq[IWX_MAX_TVQM_QUEUES];
-	struct iwx_rx_ring rxq;
-	int qfullmsk;
+    struct iwx_tx_ring txq[IWX_MAX_TVQM_QUEUES];
+    struct iwx_rx_ring rxq;
+    ItlQueueMask<IWX_MAX_TVQM_QUEUES> qfullmsk;
     struct iwx_tx_ring sc_tvqm_ring;
     int first_data_qid;
 
@@ -664,6 +665,7 @@ struct iwx_softc {
 	int sc_init_complete;
 #define IWX_INIT_COMPLETE	0x01
 #define IWX_CALIB_COMPLETE	0x02
+#define IWX_PNVM_COMPLETE    0x04
 
 	struct iwx_ucode_status sc_uc;
 	char sc_fwver[32];

@@ -430,7 +430,23 @@ struct apple80211_bssid_data
     struct ether_addr    bssid;
 };
 
-#if __IO80211_TARGET >= __MAC_14_0
+#ifdef AIRPORT_WCL
+struct apple80211_capability_data
+{
+    u_int32_t    version;
+#if __IO80211_TARGET == __MAC_15_2
+    u_int8_t     capabilities[19];
+#else
+    u_int8_t     capabilities[21];
+#endif
+};
+#if __IO80211_TARGET == __MAC_15_2
+static_assert(sizeof(apple80211_capability_data) == 0x18, "Sequoia capability ABI");
+#else
+static_assert(sizeof(apple80211_capability_data) == 0x1c, "WCL capability ABI");
+#endif
+static_assert(__offsetof(apple80211_capability_data, capabilities) == 4, "WCL capability offset");
+#elif __IO80211_TARGET >= __MAC_14_0
 struct apple80211_capability_data
 {
     u_int32_t    version;
@@ -1402,4 +1418,3 @@ struct apple80211_driver_available_data {
 static_assert(sizeof(struct apple80211_driver_available_data) == 0xB8, "invalid struct apple80211_driver_available_data");
 
 #endif // _APPLE80211_IOCTL_H_
-

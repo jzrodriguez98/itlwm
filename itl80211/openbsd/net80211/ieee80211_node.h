@@ -427,7 +427,11 @@ struct ieee80211_node {
     uint8_t ni_ppe_thres[IEEE80211_HE_PPE_THRES_MAX_LEN]; /* Holds the PPE Thresholds data. */
     uint32_t        ni_he_oper_params;
     uint16_t        ni_he_oper_nss_set;
-    uint8_t         ni_he_optional[8];
+    uint8_t         ni_he_optional[9];
+    uint8_t         ni_he_mu_edca[13]; /* QoS info + four AC records */
+    uint32_t        ni_he_txrate_kbps; /* Last firmware HE SU rate, 0 if unknown */
+    uint8_t         ni_he_tx_nss;
+    uint8_t         ni_he_requested; /* HE capabilities sent in association request */
     
 	/* Timeout handlers which trigger Tx Block Ack negotiation. */
 	CTimeout*		ni_addba_req_to[IEEE80211_NUM_TID];
@@ -489,6 +493,9 @@ struct ieee80211_node {
 #define IEEE80211_NODE_VHT_SGI80    0x80000    /* SGI on 80 MHz negotiated */
 #define IEEE80211_NODE_VHT_SGI160   0x100000    /* SGI on 160 MHz negotiated */
 #define IEEE80211_NODE_HE       0x200000    /* HE negotiated */
+#define IEEE80211_NODE_HECAP    0x400000    /* validated HE capabilities */
+#define IEEE80211_NODE_HEOP     0x800000    /* validated HE operation */
+#define IEEE80211_NODE_HE_MU_EDCA 0x1000000 /* validated MU EDCA */
 
 	/* If not NULL, this function gets called when ni_refcnt hits zero. */
 	void			(*ni_unref_cb)(struct ieee80211com *,
@@ -681,7 +688,7 @@ int ieee80211_setup_htop(struct ieee80211_node *, const uint8_t *,
 void ieee80211_setup_vhtcaps(struct ieee80211com *, struct ieee80211_node *, const uint8_t *);
 void ieee80211_setup_vhtopmode(struct ieee80211_node *, const uint8_t *);
 void ieee80211_clear_vhtcaps(struct ieee80211_node *);
-void ieee80211_setup_hecaps(struct ieee80211_node *, const uint8_t *,
+int ieee80211_setup_hecaps(struct ieee80211_node *, const uint8_t *,
                            uint8_t);
 int ieee80211_setup_heop(struct ieee80211_node *, const uint8_t *,
     uint8_t);

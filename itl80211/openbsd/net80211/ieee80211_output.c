@@ -1260,53 +1260,27 @@ ieee80211_add_vhtcaps(uint8_t *frm, struct ieee80211com *ic)
 uint8_t *
 ieee80211_add_hecaps(uint8_t *frm, struct ieee80211com *ic)
 {
-    uint8_t nss_size, ie_len;
-    uint8_t *orig_pos = frm;
-    
-    nss_size = ieee80211_he_mcs_nss_size(&ic->ic_he_cap_elem);
-    ie_len = 2 + 1 +
-    sizeof(ic->ic_he_cap_elem) + nss_size +
-    ieee80211_he_ppe_size(ic->ic_ppe_thres[0],
-                  ic->ic_he_cap_elem.phy_cap_info);
-    
+    uint8_t *start = frm;
     *frm++ = IEEE80211_ELEMID_EXTENSION;
-    frm++; /* We'll set the size later below */
+    frm++;
     *frm++ = IEEE80211_ELEMID_EXT_HE_CAPABILITY;
-    
-    /* Fixed data */
     memcpy(frm, &ic->ic_he_cap_elem, sizeof(ic->ic_he_cap_elem));
     frm += sizeof(ic->ic_he_cap_elem);
-    
-    memcpy(frm, &ic->ic_he_mcs_nss_supp, nss_size);
-    frm += nss_size;
-    
-    /* Check if PPE Threshold should be present */
-    if ((ic->ic_he_cap_elem.phy_cap_info[6] &
-         IEEE80211_HE_PHY_CAP6_PPE_THRESHOLD_PRESENT) == 0)
-        return frm;
-    
-    /*
-     * Calculate how many PPET16/PPET8 pairs are to come. Algorithm:
-     * (NSS_M1 + 1) x (num of 1 bits in RU_INDEX_BITMASK)
-     */
-    nss_size = hweight8(ic->ic_ppe_thres[0] &
-             IEEE80211_PPE_THRES_RU_INDEX_BITMASK_MASK);
-    
-    nss_size *= (1 + ((ic->ic_ppe_thres[0] & IEEE80211_PPE_THRES_NSS_MASK) >>
-           IEEE80211_PPE_THRES_NSS_POS));
-    
-    /*
-     * Each pair is 6 bits, and we need to add the 7 "header" bits to the
-     * total size.
-     */
-    nss_size = (nss_size * IEEE80211_PPE_THRES_INFO_PPET_SIZE * 2) + 7;
-    nss_size = DIV_ROUND_UP(nss_size, 8);
-    
-    /* Copy PPE Thresholds */
-    memcpy(frm, &ic->ic_ppe_thres, nss_size);
-    frm += nss_size;
-    
-    orig_pos[1] = (frm - orig_pos) - 2;
+    memcpy(frm, &ic->ic_he_mcs_nss_supp.rx_mcs_80, 4);
+    frm += 4;
+    if (ic->ic_he_cap_elem.phy_cap_info[0] & IEEE80211_HE_PHY_CAP0_CHANNEL_WIDTH_SET_160MHZ_IN_5G) {
+        memcpy(frm, &ic->ic_he_mcs_nss_supp.rx_mcs_160, 4);
+        frm += 4;
+    }
+    if (ic->ic_he_cap_elem.phy_cap_info[0] & IEEE80211_HE_PHY_CAP0_CHANNEL_WIDTH_SET_80PLUS80_MHZ_IN_5G) {
+        memcpy(frm, &ic->ic_he_mcs_nss_supp.rx_mcs_80p80, 4);
+        frm += 4;
+    }
+    unsigned ppe = ieee80211_he_ppe_size(ic->ic_ppe_thres[0],
+        ic->ic_he_cap_elem.phy_cap_info);
+    memcpy(frm, ic->ic_ppe_thres, ppe);
+    frm += ppe;
+    start[1] = frm - start - 2;
     return frm;
 }
 
@@ -1557,6 +1531,9 @@ ieee80211_get_assoc_req(struct ieee80211com *ic, struct ieee80211_node *ni,
 	mbuf_t m;
 	u_int8_t *frm;
 	u_int16_t capinfo;
+	/* VHT is only defined for 5 GHz; do not advertise it on 2.4 GHz. */
+	int vht_on = (ic->ic_flags & IEEE80211_F_VHTON) &&
+	    !IEEE80211_IS_CHAN_2GHZ(ni->ni_chan);
 
 	m = ieee80211_getmgmt(MBUF_DONTWAIT, MT_DATA,
 	    2 + 2 +
@@ -1574,7 +1551,7 @@ ieee80211_get_assoc_req(struct ieee80211com *ic, struct ieee80211_node *ni,
 	      (ni->ni_rsnprotos & IEEE80211_PROTO_WPA)) ?
 		2 + IEEE80211_WPAIE_MAXLEN : 0) +
 	    ((ic->ic_flags & IEEE80211_F_HTON) ? sizeof(struct ieee80211_ie_htcap) + sizeof(struct ieee80211_wme_info) : 0) +
-        ((ic->ic_flags & IEEE80211_F_VHTON) ? sizeof(struct ieee80211_ie_vhtcap) + 2 : 0) +
+        (vht_on ? sizeof(struct ieee80211_ie_vhtcap) + 2 : 0) +
         ((ic->ic_flags & IEEE80211_F_HEON) ? (sizeof(struct ieee80211_he_cap_elem) + 2 + 1 + sizeof(struct ieee80211_he_mcs_nss_supp) + IEEE80211_HE_PPE_THRES_MAX_LEN) : 0));
 	if (m == NULL)
 		return NULL;
@@ -1627,15 +1604,24 @@ ieee80211_get_assoc_req(struct ieee80211com *ic, struct ieee80211_node *ni,
 		frm = ieee80211_add_wme_info(frm, ic);
 	}
     
-    if (ic->ic_flags & IEEE80211_F_VHTON)
+    if (vht_on)
         frm = ieee80211_add_vhtcaps(frm, ic);
     
-    if (ic->ic_flags & IEEE80211_F_HEON)
+    ni->ni_he_requested = ieee80211_he_supported(ic, ni);
+    if (ni->ni_he_requested)
         frm = ieee80211_add_hecaps(frm, ic);
 
     size_t l = frm - mtod(m, u_int8_t *);
     mbuf_pkthdr_setlen(m, l);
     mbuf_setlen(m, l);
+
+#if defined(AIRPORT_WCL) && defined(DEBUG)
+    XYLog("%s capinfo=0x%04x listen=%d rates=%d ht=%d wmm=%d vht=%d he=%d len=%zu\n",
+        __FUNCTION__, (unsigned int)capinfo, ic->ic_lintval, rs->rs_nrates,
+        !!(ic->ic_flags & IEEE80211_F_HTON),
+        !!(ic->ic_flags & IEEE80211_F_HTON),
+        !!vht_on, ni->ni_he_requested, l);
+#endif
 
 	return m;
 }

@@ -6,6 +6,13 @@
 //  Copyright © 2023 钟先耀. All rights reserved.
 //
 
+#ifdef AIRPORT_WCL
+#if __IO80211_TARGET == __MAC_15_2
+#include "macOS15/IOSkywalkNetworkInterface.h"
+#else
+#include "macOS26/IOSkywalkNetworkInterface.h"
+#endif
+#else
 #ifndef IOSkywalkNetworkInterface_h
 #define IOSkywalkNetworkInterface_h
 
@@ -105,3 +112,5 @@ public:
 static_assert(sizeof(IOSkywalkNetworkInterface) == 0xD0, "Invalid class size");
 
 #endif /* IOSkywalkNetworkInterface_h */
+
+#endif

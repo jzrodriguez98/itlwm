@@ -20,6 +20,12 @@ OSDefineMetaClassAndAbstractStructors(ItlHalService, OSObject)
 bool ItlHalService::
 initWithController(IOEthernetController *controller, IOWorkLoop *workloop, IOCommandGate *commandGate)
 {
+#ifdef AIRPORT_WCL
+    auto ic = get80211Controller();
+    ic->ic_wcl_scan_away_time_ms = 0;
+    bzero(ic->ic_wcl_tx_packets, sizeof(ic->ic_wcl_tx_packets));
+    bzero(ic->ic_wcl_rx_packets, sizeof(ic->ic_wcl_rx_packets));
+#endif
     this->controller = controller;
     this->controller->retain();
     this->mainWorkLoop = workloop;
@@ -76,6 +82,12 @@ void ItlHalService::
 free()
 {
     XYLog("%s\n", __PRETTY_FUNCTION__);
+#ifdef AIRPORT_VTD
+    if (dmaArena) {
+        dmaArena->destroy();
+        dmaArena = nullptr;
+    }
+#endif
     if (this->mainWorkLoop) {
         this->mainWorkLoop->release();
     }
@@ -97,3 +109,13 @@ free()
     this->controller = NULL;
     super::free();
 }
+
+#ifdef AIRPORT_VTD
+bool ItlHalService::prepareDma(IOPCIDevice *device, uint8_t addressBits)
+{
+    if (dmaArena || !mainWorkLoop || mainWorkLoop->inGate())
+        return false;
+    dmaArena = ItlDmaArena::create(device, controller, addressBits);
+    return dmaArena != nullptr;
+}
+#endif

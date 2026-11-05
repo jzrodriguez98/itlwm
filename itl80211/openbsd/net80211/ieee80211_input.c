@@ -619,6 +619,10 @@ ieee80211_inputm(struct _ifnet *ifp, mbuf_t m, struct ieee80211_node *ni,
                 bpf_mtap(ic->ic_rawbpf, m, BPF_DIRECTION_IN);
 #endif
             
+#ifdef AIRPORT_WCL
+            if (ic->ic_opmode == IEEE80211_M_STA)
+                ++ic->ic_wcl_rx_packets[hasqos ? ieee80211_wcl_ac(tid) : EDCA_AC_BE];
+#endif
             if ((ni->ni_flags & IEEE80211_NODE_HT) &&
                 hasqos && (qos & IEEE80211_QOS_AMSDU))
                 ieee80211_amsdu_decap(ic, m, ni, hdrlen, ml);
@@ -1129,7 +1133,14 @@ ieee80211_enqueue_data(struct ieee80211com *ic, mbuf_t m,
             if (ifp->if_bpf && m1 == NULL)
                 bpf_mtap(ifp->if_bpf, m, BPF_DIRECTION_IN);
 #endif
-#ifdef USE_APPLE_SUPPLICANT
+#if defined(AIRPORT_WCL)
+            if (ic->ic_wcl_enterprise) {
+                mbuf_t eapCopy = NULL;
+                if (mbuf_dup(m, MBUF_DONTWAIT, &eapCopy) == 0 && eapCopy)
+                    ml_enqueue(ml, eapCopy);
+            }
+            ieee80211_eapol_key_input(ic, m, ni);
+#elif defined(USE_APPLE_SUPPLICANT)
             ml_enqueue(ml, m);
 #else
 #ifdef IO80211FAMILY_V2
@@ -1275,9 +1286,12 @@ ieee80211_amsdu_decap(struct ieee80211com *ic, mbuf_t m,
     
     while (mbuf_pkthdr_len(m) >= ETHER_HDR_LEN + LLC_SNAPFRAMELEN) {
         /* process an A-MSDU subframe */
-        mbuf_pullup(&m, ETHER_HDR_LEN + LLC_SNAPFRAMELEN);
-        if (m == NULL)
-            break;
+        if (mbuf_len(m) < ETHER_HDR_LEN + LLC_SNAPFRAMELEN &&
+            mbuf_pullup(&m, ETHER_HDR_LEN + LLC_SNAPFRAMELEN)) {
+            ic->ic_stats.is_rx_decap++;
+            ml_purge(&subframes);
+            return;
+        }
         eh = mtod(m, struct ether_header *);
         /* examine 802.3 header */
         len = ntohs(eh->ether_type);
@@ -1315,9 +1329,7 @@ ieee80211_amsdu_decap(struct ieee80211com *ic, mbuf_t m,
             return;
         }
         
-        /* "detach" our A-MSDU subframe from the others */
-        mbuf_split(m, len, MBUF_DONTWAIT, &n);
-        if (n == NULL) {
+        if (ieee80211_amsdu_decap_validate(ic, m, ni)) {
             /* stop processing A-MSDU subframes */
             ic->ic_stats.is_rx_decap++;
             ml_purge(&subframes);
@@ -1325,7 +1337,9 @@ ieee80211_amsdu_decap(struct ieee80211com *ic, mbuf_t m,
             return;
         }
         
-        if (ieee80211_amsdu_decap_validate(ic, m, ni)) {
+        /* "detach" our A-MSDU subframe from the others */
+        mbuf_split(m, len, MBUF_DONTWAIT, &n);
+        if (n == NULL) {
             /* stop processing A-MSDU subframes */
             ic->ic_stats.is_rx_decap++;
             ml_purge(&subframes);
@@ -1638,6 +1652,42 @@ ieee80211_save_ie_tlv(const u_int8_t *frm, u_int8_t **ie, uint32_t *accept_len, 
     return 0;
 }
 
+/* The frame walker has already checked each complete IE's boundary. */
+static void
+ieee80211_update_he_params(struct ieee80211com *ic, struct ieee80211_node *ni,
+    const uint8_t *hecap, const uint8_t *heopmode, const uint8_t *he_mu_edca)
+{
+    uint32_t old_he_op = ni->ni_he_oper_params;
+    bool he_changed = false;
+    /* Beacon omissions must not erase a live association's HE context. */
+    if (ni != ic->ic_bss || ic->ic_state != IEEE80211_S_RUN)
+        ni->ni_flags &= ~(IEEE80211_NODE_HECAP | IEEE80211_NODE_HEOP | IEEE80211_NODE_HE_MU_EDCA);
+    if (hecap != NULL && heopmode != NULL) {
+        bool live_he = ni == ic->ic_bss && ic->ic_state == IEEE80211_S_RUN &&
+            (ni->ni_flags & IEEE80211_NODE_HE);
+        if (!live_he)
+            ieee80211_setup_hecaps(ni, hecap + 3, hecap[1] - 1);
+        if (!live_he || (heopmode[1] >= 7 &&
+            ieee80211_he_oper_size(heopmode + 3) <= heopmode[1]))
+            ieee80211_setup_heop(ni, heopmode + 3, heopmode[1] - 1);
+        he_changed = old_he_op != ni->ni_he_oper_params;
+    }
+    if (he_mu_edca != NULL) {
+        bool valid = true;
+        for (unsigned ac = 0; ac < 4; ac++)
+            if (((he_mu_edca[1 + 3 * ac] >> 5) & 3) != ac) valid = false;
+        if (valid) {
+            he_changed |= !(ni->ni_flags & IEEE80211_NODE_HE_MU_EDCA) ||
+                memcmp(ni->ni_he_mu_edca, he_mu_edca, 13) != 0;
+            memcpy(ni->ni_he_mu_edca, he_mu_edca, 13);
+            ni->ni_flags |= IEEE80211_NODE_HE_MU_EDCA;
+        }
+    }
+    if (he_changed && ni == ic->ic_bss && ic->ic_state == IEEE80211_S_RUN &&
+        (ni->ni_flags & IEEE80211_NODE_HE) && ic->ic_updateprot)
+        ic->ic_updateprot(ic);
+}
+
 /*-
  * Beacon/Probe response frame format:
  * [8]   Timestamp
@@ -1668,6 +1718,7 @@ ieee80211_recv_probe_resp(struct ieee80211com *ic, mbuf_t m,
     const uint8_t *vhtopmode;
     const uint8_t *hecap;
     const uint8_t *heopmode;
+    const uint8_t *he_mu_edca = NULL;
     u_int16_t capinfo, bintval;
     u_int8_t chan, bchan, erp, dtim_count, dtim_period;
     int is_new;
@@ -1786,8 +1837,11 @@ ieee80211_recv_probe_resp(struct ieee80211com *ic, mbuf_t m,
                 }
                 break;
             case IEEE80211_ELEMID_EXTENSION:
+                if (frm[1] < 1)
+                    break;
                 switch (frm[2]) {
                     case IEEE80211_ELEMID_EXT_HE_MU_EDCA:
+                        if (frm[1] == 14) he_mu_edca = frm + 3;
                         break;
                     case IEEE80211_ELEMID_EXT_HE_CAPABILITY:
                         hecap = frm;
@@ -1895,10 +1949,7 @@ ieee80211_recv_probe_resp(struct ieee80211com *ic, mbuf_t m,
         ieee80211_setup_vhtcaps(ic, ni, vhtcap);
         ieee80211_setup_vhtopmode(ni, vhtopmode);
     }
-    if (hecap != NULL && heopmode != NULL) {
-        ieee80211_setup_hecaps(ni, hecap + 3, hecap[1] - 1);
-        ieee80211_setup_heop(ni, heopmode + 3, heopmode[1] - 1);
-    }
+    ieee80211_update_he_params(ic, ni, hecap, heopmode, he_mu_edca);
     
     ni->ni_dtimcount = dtim_count;
     ni->ni_dtimperiod = dtim_period;
@@ -2020,11 +2071,16 @@ ieee80211_recv_probe_resp(struct ieee80211com *ic, mbuf_t m,
             ni->ni_flags &= ~IEEE80211_NODE_QOS;
     }
     
+
     if (ic->ic_state == IEEE80211_S_SCAN ||
         (ic->ic_flags & IEEE80211_F_BGSCAN)) {
         struct ieee80211_rsnparams rsn, wpa;
         
+#ifdef AIRPORT_WCL
+        uint32_t tlv_len = (mtod(m, u_int8_t *) + mbuf_len(m)) - (u_int8_t *)&wh[1] - 8 - 2 - 2;
+#else
         uint32_t tlv_len = (mtod(m, u_int8_t *) + mbuf_len(m)) - (u_int8_t *)&wh[1] + 1 - 8 - 2 - 2;
+#endif
         ieee80211_save_ie_tlv(((u_int8_t *)&wh[1]) + 8 + 2 + 2, &ni->ni_rsnie_tlv, &ni->ni_rsnie_tlv_len, tlv_len);
         ni->ni_rsnprotos = IEEE80211_PROTO_NONE;
         ni->ni_supported_rsnprotos = IEEE80211_PROTO_NONE;
@@ -2120,6 +2176,18 @@ ieee80211_recv_probe_resp(struct ieee80211com *ic, mbuf_t m,
     ni->ni_erp = erp;
     /* NB: must be after ni_chan is setup */
     ieee80211_setup_rates(ic, ni, rates, xrates, IEEE80211_F_DOSORT);
+#ifdef AIRPORT_WCL
+    if (ic->ic_event_handler) {
+        const uint8_t *ies = (const uint8_t *)&wh[1] + 12;
+        const uint8_t *end = mtod(m, const uint8_t *) + mbuf_len(m);
+        if (end >= ies) {
+            struct ieee80211_beacon_event event = {ni, ies, (size_t)(end - ies),
+                (const uint8_t *)wh, (size_t)(end - (const uint8_t *)wh)};
+            ic->ic_event_handler(ic, IEEE80211_EVT_BEACON, &event);
+        }
+    }
+#endif
+
 #ifndef IEEE80211_STA_ONLY
     if (ic->ic_opmode == IEEE80211_M_IBSS && is_new && isprobe) {
         /*
@@ -2642,6 +2710,7 @@ ieee80211_recv_assoc_resp(struct ieee80211com *ic, mbuf_t m,
     const uint8_t *vhtopmode;
     const uint8_t *hecap;
     const uint8_t *heopmode;
+    const uint8_t *he_mu_edca = NULL;
     u_int16_t capinfo, status, associd;
     u_int8_t rate;
     
@@ -2664,7 +2733,10 @@ ieee80211_recv_assoc_resp(struct ieee80211com *ic, mbuf_t m,
     status =  LE_READ_2(frm); frm += 2;
 
     ic->ic_assoc_status = status;
-    if (status == IEEE80211_STATUS_SUCCESS) {
+#ifndef AIRPORT_WCL
+    if (status == IEEE80211_STATUS_SUCCESS)
+#endif
+    { // WCL must also receive failed association responses.
         if (ic->ic_event_handler) {
             (*ic->ic_event_handler)(ic, IEEE80211_EVT_STA_ASSOC_DONE, NULL);
         }
@@ -2722,8 +2794,11 @@ ieee80211_recv_assoc_resp(struct ieee80211com *ic, mbuf_t m,
                 }
                 break;
             case IEEE80211_ELEMID_EXTENSION:
+                if (frm[1] < 1)
+                    break;
                 switch (frm[2]) {
                     case IEEE80211_ELEMID_EXT_HE_MU_EDCA:
+                        if (frm[1] == 14) he_mu_edca = frm + 3;
                         break;
                     case IEEE80211_ELEMID_EXT_HE_CAPABILITY:
                         hecap = frm;
@@ -2782,16 +2857,13 @@ ieee80211_recv_assoc_resp(struct ieee80211com *ic, mbuf_t m,
         ieee80211_setup_vhtcaps(ic, ni, vhtcap);
         ieee80211_setup_vhtopmode(ni, vhtopmode);
     }
-    if (hecap != NULL && heopmode != NULL) {
-        ieee80211_setup_hecaps(ni, hecap + 3, hecap[1] - 1);
-        ieee80211_setup_heop(ni, heopmode + 3, heopmode[1] - 1);
-    }
+    ieee80211_update_he_params(ic, ni, hecap, heopmode, he_mu_edca);
 
+    if (hecap == NULL || heopmode == NULL)
+        ni->ni_flags &= ~(IEEE80211_NODE_HECAP | IEEE80211_NODE_HEOP);
     ieee80211_ht_negotiate(ic, ni);
     ieee80211_vht_negotiate(ic, ni);
-    if (hecap != NULL && heopmode != NULL) {
-        ieee80211_he_negotiate(ic, ni);
-    }
+    ieee80211_he_negotiate(ic, ni);
     
     /* Hop into 11n/11ac/11ax mode after associating to an HT AP in a legacy mode. */
     if (ni->ni_flags & IEEE80211_NODE_HE)

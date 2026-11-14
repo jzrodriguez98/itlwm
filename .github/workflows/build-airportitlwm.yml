@@ -24,10 +24,10 @@ jobs:
       BUILD_TARGET: ${{ inputs.target || 'both' }}
     steps:
       - name: Check out selected branch
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.12'
 
@@ -79,22 +79,34 @@ jobs:
           plutil -lint build-tahoe/btleadv/BTLEAdvFixup.kext/Contents/Info.plist
           echo "Verified AirportItlwm and BTLEAdvFixup Tahoe products."
 
-      - name: Upload Sequoia kexts
+      - name: Upload Sequoia AirportItlwm
         if: ${{ env.BUILD_TARGET == 'both' || env.BUILD_TARGET == 'sequoia' }}
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         with:
           name: AirportItlwm-Sequoia
-          path: |
-            build-sequoia/AirportItlwm.kext
-            build-sequoia/btleadv/BTLEAdvFixup.kext
+          path: build-sequoia/AirportItlwm.kext
           if-no-files-found: error
 
-      - name: Upload Tahoe kexts
+      - name: Upload Sequoia BTLEAdvFixup
+        if: ${{ env.BUILD_TARGET == 'both' || env.BUILD_TARGET == 'sequoia' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: BTLEAdvFixup-Sequoia
+          path: build-sequoia/btleadv/BTLEAdvFixup.kext
+          if-no-files-found: error
+
+      - name: Upload Tahoe AirportItlwm
         if: ${{ env.BUILD_TARGET == 'both' || env.BUILD_TARGET == 'tahoe' }}
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         with:
           name: AirportItlwm-Tahoe
-          path: |
-            build-tahoe/AirportItlwm.kext
-            build-tahoe/btleadv/BTLEAdvFixup.kext
+          path: build-tahoe/AirportItlwm.kext
+          if-no-files-found: error
+
+      - name: Upload Tahoe BTLEAdvFixup
+        if: ${{ env.BUILD_TARGET == 'both' || env.BUILD_TARGET == 'tahoe' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: BTLEAdvFixup-Tahoe
+          path: build-tahoe/btleadv/BTLEAdvFixup.kext
           if-no-files-found: error

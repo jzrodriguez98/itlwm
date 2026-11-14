@@ -10,6 +10,13 @@
 #include <IOKit/IOLib.h>
 #include <libkern/c++/OSBoolean.h>
 
+extern bool itlLogOn;
+extern bool itlLogStartup;
+void itlLogRing(const char *fmt, ...) __printflike(1, 2);
+// IOLog from this kext doesn't reach the unified log; the start log ring keeps the reason (#14).
+#define DMA_LOG(fmt, ...) do { IOLog("AirportItlwm: " fmt, ##__VA_ARGS__); \
+    if (itlLogOn || itlLogStartup) itlLogRing("DMA: " fmt, ##__VA_ARGS__); } while (0)
+
 ItlDmaArena *ItlDmaArena::create(IOPCIDevice *device, IOService *owner, uint8_t bits)
 {
     auto arena = new ItlDmaArena();
@@ -31,7 +38,7 @@ bool ItlDmaArena::initialize(IOPCIDevice *pci, IOService *controller, uint8_t bi
     owner = controller;
     owner->setProperty("IOPCIUseDeviceMapper", kOSBooleanTrue);
     if (!device->open(owner)) {
-        IOLog("AirportItlwm: DMA could not open PCI device\n");
+        DMA_LOG("could not open PCI device\n");
         return false;
     }
     opened = true;
@@ -39,7 +46,7 @@ bool ItlDmaArena::initialize(IOPCIDevice *pci, IOService *controller, uint8_t bi
     const char *mode = "device";
     if (!mapper) {
         if (device->getProperty("iommu-parent")) {
-            IOLog("AirportItlwm: DMA device mapper unavailable\n");
+            DMA_LOG("device mapper unavailable\n");
             return false;
         }
         IOMapper::checkForSystemMapper();
@@ -48,6 +55,7 @@ bool ItlDmaArena::initialize(IOPCIDevice *pci, IOService *controller, uint8_t bi
             mapper->retain();
         mode = mapper ? "system" : "direct";
     }
+    DMA_LOG("mapper %s, iommu-parent %s\n", mode, device->getProperty("iommu-parent") ? "yes" : "no");
     lock = IOSimpleLockAlloc();
     if (!lock)
         return false;
@@ -58,15 +66,22 @@ bool ItlDmaArena::initialize(IOPCIDevice *pci, IOService *controller, uint8_t bi
         block.memory = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(kernel_task,
             kIODirectionInOut | kIOMemoryHostPhysicallyContiguous | kIOMemoryMapperNone,
             BlockSize, mask);
-        if (!block.memory)
+        if (!block.memory) {
+            DMA_LOG("could not allocate block %u (%u bytes, %u-bit mask)\n", i, unsigned(BlockSize), unsigned(bits));
             return false;
-        if (block.memory->prepare() != kIOReturnSuccess)
+        }
+        const IOReturn prepared = block.memory->prepare();
+        if (prepared != kIOReturnSuccess) {
+            DMA_LOG("could not prepare block %u: 0x%x\n", i, prepared);
             return false;
+        }
         block.prepared = true;
         block.command = IODMACommand::withSpecification(kIODMACommandOutputHost64,
             bits, BlockSize, IODMACommand::kMapped, BlockSize, PageSize, mapper);
-        if (!block.command || block.command->setMemoryDescriptor(block.memory) != kIOReturnSuccess)
+        if (!block.command || block.command->setMemoryDescriptor(block.memory) != kIOReturnSuccess) {
+            DMA_LOG("could not set up the DMA command for block %u\n", i);
             return false;
+        }
         IODMACommand::Segment64 segment = {};
         uint64_t offset = 0;
         uint32_t count = 1;
@@ -75,7 +90,7 @@ bool ItlDmaArena::initialize(IOPCIDevice *pci, IOService *controller, uint8_t bi
             (segment.fIOVMAddr & (PageSize - 1)) ||
             segment.fIOVMAddr > UINT64_MAX - (BlockSize - 1) ||
             (bits < 64 && ((segment.fIOVMAddr + BlockSize - 1) >> bits))) {
-            IOLog("AirportItlwm: DMA arena segment constraints failed at block %u\n", i);
+            DMA_LOG("arena segment constraints failed at block %u: addr 0x%llx len 0x%llx count %u\n", i, segment.fIOVMAddr, segment.fLength, count);
             return false;
         }
         block.address = segment.fIOVMAddr;

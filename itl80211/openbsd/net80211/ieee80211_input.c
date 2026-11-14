@@ -176,7 +176,7 @@ ieee80211_input_hwdecrypt(struct ieee80211com *ic, struct ieee80211_node *ni,
 
    k = ieee80211_get_rxkey(ic, m, ni);
    if (k == NULL)
-       return NULL;
+       goto drop;
 
    wh = mtod(m, struct ieee80211_frame *);
    hdrlen = ieee80211_get_hdrlen(wh);
@@ -201,15 +201,15 @@ ieee80211_input_hwdecrypt(struct ieee80211com *ic, struct ieee80211_node *ni,
            break;
        }
            if (ieee80211_ccmp_get_pn(&pn, &prsc, m, k) != 0)
-               return NULL;
+               goto drop;
            if (rxi->rxi_flags & IEEE80211_RXI_HWDEC_SAME_PN) {
                if (pn < *prsc) {
                    ic->ic_stats.is_ccmp_replays++;
-                   return NULL;
+                   goto drop;
                }
            } else if (pn <= *prsc) {
                ic->ic_stats.is_ccmp_replays++;
-               return NULL;
+               goto drop;
            }
 
        /* Update last-seen packet number. */
@@ -231,16 +231,16 @@ ieee80211_input_hwdecrypt(struct ieee80211com *ic, struct ieee80211_node *ni,
            break;
        }
        if (ieee80211_tkip_get_tsc(&pn, &prsc, m, k) != 0)
-           return NULL;
+           goto drop;
 
        if (rxi->rxi_flags & IEEE80211_RXI_HWDEC_SAME_PN) {
            if (pn < *prsc) {
                ic->ic_stats.is_tkip_replays++;
-               return NULL;
+               goto drop;
                }
            } else if (pn <= *prsc) {
            ic->ic_stats.is_tkip_replays++;
-           return NULL;
+           goto drop;
        }
 
        /* Update last-seen packet number. */
@@ -258,6 +258,13 @@ ieee80211_input_hwdecrypt(struct ieee80211com *ic, struct ieee80211_node *ni,
    }
 
    return m;
+drop:
+   /*
+    * Every rejection consumes the frame: the caller only sees NULL, so a
+    * frame that wasn't freed here was leaked.
+    */
+   mbuf_freem(m);
+   return NULL;
 }
 
 /*
@@ -1329,7 +1336,9 @@ ieee80211_amsdu_decap(struct ieee80211com *ic, mbuf_t m,
             return;
         }
         
-        if (ieee80211_amsdu_decap_validate(ic, m, ni)) {
+        /* "detach" our A-MSDU subframe from the others */
+        n = NULL;
+        if (mbuf_split(m, len, MBUF_DONTWAIT, &n) != 0 || n == NULL) {
             /* stop processing A-MSDU subframes */
             ic->ic_stats.is_rx_decap++;
             ml_purge(&subframes);
@@ -1337,13 +1346,13 @@ ieee80211_amsdu_decap(struct ieee80211com *ic, mbuf_t m,
             return;
         }
         
-        /* "detach" our A-MSDU subframe from the others */
-        mbuf_split(m, len, MBUF_DONTWAIT, &n);
-        if (n == NULL) {
+        if (ieee80211_amsdu_decap_validate(ic, m, ni)) {
             /* stop processing A-MSDU subframes */
             ic->ic_stats.is_rx_decap++;
             ml_purge(&subframes);
             mbuf_freem(m);
+            /* The split left the remaining subframes in n; they're ours too. */
+            mbuf_freem(n);
             return;
         }
         
@@ -1913,6 +1922,27 @@ ieee80211_recv_probe_resp(struct ieee80211com *ic, mbuf_t m,
                  isprobe ? "probe response" : "beacon", bchan, chan));
         ic->ic_stats.is_rx_chanmismatch++;
         return;
+    }
+
+    /*
+     * Beacon hint, as Linux's regulatory code does: an AP beaconing on the
+     * channel it was heard on shows that initiating there is allowed, even
+     * when the NVM marks the channel passive. Only beacons received on their
+     * own channel count. An AP operating at 80 MHz on 149-161 (VHT centre 155)
+     * covers all four 20 MHz channels. Radar (DFS) flags are not affected:
+     * users of the hint still refuse DFS channels.
+     */
+    if (!isprobe && rxi->rxi_chan != 0 && chan == rxi->rxi_chan &&
+        (capinfo & IEEE80211_CAPINFO_ESS) &&
+        !(ic->ic_channels[chan].ic_flags & IEEE80211_CHAN_DFS)) {
+        setbit(ic->ic_beacon_hint, chan);
+        if (vhtopmode != NULL && chan >= 149 && chan <= 161 &&
+            ((const struct ieee80211_ie_vht_operation *)vhtopmode)->chan_width == 1 &&
+            ((const struct ieee80211_ie_vht_operation *)vhtopmode)->center_freq_seg1_idx == 155) {
+            for (unsigned c = 149; c <= 161; c += 4)
+                if (!(ic->ic_channels[c].ic_flags & IEEE80211_CHAN_DFS))
+                    setbit(ic->ic_beacon_hint, c);
+        }
     }
     
 #ifdef IEEE80211_DEBUG

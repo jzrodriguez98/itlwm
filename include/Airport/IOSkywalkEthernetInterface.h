@@ -18,7 +18,7 @@ class IOSkywalkEthernetInterface : public IOSkywalkNetworkInterface {
     
 public:
     struct RegistrationInfo {
-        uint8_t pad[304];
+        uint8_t bytes[304];   // 0x130, as on Tahoe and Sequoia; filled by offset
     } __attribute__((packed));
     
 public:
@@ -66,7 +66,9 @@ public:
     
 public:
     bool initRegistrationInfo(IOSkywalkEthernetInterface::RegistrationInfo*, unsigned int, unsigned long);
-    bool registerEthernetInterface(IOSkywalkEthernetInterface::RegistrationInfo const*, IOSkywalkPacketQueue**, unsigned int, IOSkywalkPacketBufferPool*, IOSkywalkPacketBufferPool*, unsigned int);
+    // Sonoma 14.8.9 (23J631): returns an IOReturn (0xe00002c2, 0xe00002be, 0xe00002bd on failure).
+    IOReturn registerEthernetInterface(IOSkywalkEthernetInterface::RegistrationInfo const*, IOSkywalkPacketQueue**, unsigned int, IOSkywalkPacketBufferPool*, IOSkywalkPacketBufferPool*, unsigned int);
+    IOReturn deregisterEthernetInterface(unsigned int);
     
 public:
     void *vptr;

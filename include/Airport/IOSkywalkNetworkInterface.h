@@ -20,7 +20,7 @@
 
 #include "IOSkywalkInterface.h"
 
-typedef UInt if_link_status;
+struct if_link_status;   // Sonoma 14.8.9 (23J631): a struct
 class IOSkywalkPacketQueue;
 class IOSkywalkLogicalLink;
 class IOSkywalkPacketBufferPool;
@@ -47,9 +47,9 @@ public:
     virtual SInt32 initBSDInterfaceParameters(ifnet_init_eparams *,sockaddr_dl **) = 0;
     virtual bool prepareBSDInterface(ifnet_t,UInt);
     virtual void finalizeBSDInterface(ifnet_t,UInt);
-    virtual ifnet_t getBSDInterface(void);
+    virtual ifnet_t getBSDInterface(void) const;
     virtual void setBSDName(char const*);
-    virtual const char *getBSDName(void);
+    virtual const char *getBSDName(void) const;
     virtual IOReturn processBSDCommand(ifnet_t,UInt,void *);
     virtual IOReturn processInterfaceCommand(ifdrv *);
     virtual IOReturn interfaceAdvisoryEnable(bool);
@@ -58,10 +58,10 @@ public:
     virtual IOReturn handleChosenMedia(UInt);
     virtual void *getSupportedMediaArray(UInt *,UInt *);
     virtual void *getPacketTapInfo(UInt *,UInt *);
-    virtual UInt getUnsentDataByteCount(UInt *,UInt *,UInt);
+    virtual UInt getUnsentDataByteCount(UInt *,UInt *,UInt) const;
     virtual UInt32 getSupportedWakeFlags(UInt *);
     virtual void enableNetworkWake(UInt);
-    virtual void calculateRingSizeForQueue(IOSkywalkPacketQueue const*,UInt *);
+    virtual void calculateRingSizeForQueue(IOSkywalkPacketQueue const*,UInt *) const;
     virtual UInt getMaxTransferUnit(void);
     virtual void setMaxTransferUnit(UInt);
     virtual UInt getMinPacketSize(void);

@@ -122,7 +122,7 @@
 #include "ItlIwm.hpp"
 #include "rs.h"
 #ifdef AIRPORT_WCL
-#include "../../AirportItlwm/WCL/WCL.hpp"
+#include "../../ForbiddenItlwm/WCL/WCL.hpp"
 #endif
 
 uint16_t ItlIwm::

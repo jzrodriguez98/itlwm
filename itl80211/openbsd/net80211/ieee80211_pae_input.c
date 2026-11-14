@@ -53,6 +53,7 @@
 
 #include <net80211/ieee80211_var.h>
 #include <net80211/ieee80211_priv.h>
+#include <EAPOLKeyLength.hpp>
 
 void	ieee80211_recv_4way_msg1(struct ieee80211com *,
                                  struct ieee80211_eapol_key *, struct ieee80211_node *);
@@ -125,15 +126,16 @@ ieee80211_eapol_key_input(struct ieee80211com *ic, mbuf_t m,
          key->desc != EAPOL_KEY_DESC_WPA))
         goto done;
     
-    /* check packet body length */
+    /*
+     * Check the packet body and key data lengths. The declared frame must
+     * hold the whole fixed header: comparing against totlen - sizeof(*key)
+     * wrapped when it did not, and any key data length passed.
+     */
     bodylen = BE_READ_2(key->len);
     totlen = 4 + bodylen;
-    if (mbuf_pkthdr_len(m) < totlen || totlen > MCLBYTES)
-        goto done;
-    
-    /* check key data length */
     paylen = BE_READ_2(key->paylen);
-    if (paylen > totlen - sizeof(*key))
+    if (!ItlEAPOL::keyLengthsValid(mbuf_pkthdr_len(m), uint16_t(bodylen),
+                                   uint16_t(paylen), sizeof(*key), MCLBYTES))
         goto done;
     
     info = BE_READ_2(key->info);

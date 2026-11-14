@@ -168,7 +168,7 @@ public:
     virtual bool createWorkQueue();
     virtual IO80211WorkQueue *getWorkQueue();
     virtual void requestPacketTx(void*, UInt);
-    virtual IOCommandGate *getIO80211CommandGate();
+    virtual IOCommandGate *getIO80211CommandGate() const;
     virtual IOReturn getHardwareAddressForInterface(IOEthernetAddress *);
     virtual bool useAppleRSNSupplicant(IO80211VirtualInterface *);
     virtual IO80211SkywalkInterface* getPrimarySkywalkInterface(void);

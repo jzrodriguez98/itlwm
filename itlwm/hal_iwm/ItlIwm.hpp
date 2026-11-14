@@ -41,7 +41,7 @@ public:
     void free() override;
     virtual bool attach(IOPCIDevice *device) override;
     virtual void detach(IOPCIDevice *device) override;
-#if defined(AIRPORT_VTD) && defined(AIRPORT_WCL)
+#ifdef AIRPORT_VTD
     bool inRateControlGate() {
         return getMainWorkLoop()->inGate();
     }

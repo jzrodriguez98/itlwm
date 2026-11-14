@@ -627,9 +627,9 @@ struct iwx_softc {
 	int sc_msix;
 
 	/* TX/RX rings. */
-    struct iwx_tx_ring txq[IWX_MAX_TVQM_QUEUES];
-    struct iwx_rx_ring rxq;
-    ItlQueueMask<IWX_MAX_TVQM_QUEUES> qfullmsk;
+	struct iwx_tx_ring txq[IWX_MAX_TVQM_QUEUES];
+	struct iwx_rx_ring rxq;
+	ItlQueueMask<IWX_MAX_TVQM_QUEUES> qfullmsk;
     struct iwx_tx_ring sc_tvqm_ring;
     int first_data_qid;
 

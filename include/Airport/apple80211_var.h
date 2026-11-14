@@ -649,8 +649,13 @@ struct apple80211_status_msg_hdr
 #define APPLE80211_M_DEAUTH_RECEIVED         32
 #define APPLE80211_M_RSSI_CHANGED            39
 #define APPLE80211_M_PEER_STATE              40
-#define APPLE80211_M_AWDL_AVAILABILITY_WINDOW_START 42
-#define APPLE80211_M_AWDL_AVAILABILITY_WINDOW_EXTENSIONS_END    43
+// AW events on 25G241, from AppleBCMWLANProximityInterface's producers (IO80211Controller::postMessage):
+// handleAvailabilityWindowStart posts 41 with 36 bytes, ...Extension 42 with 8 bytes, ...End 43 with
+// 40 bytes. IO80211AWDLPeerManager::reportDataPathEvents switches on (event - 41). Earlier versions of
+// this header named 42 the start. Nothing in this driver posts them yet.
+#define APPLE80211_M_AWDL_AVAILABILITY_WINDOW_START     41
+#define APPLE80211_M_AWDL_AVAILABILITY_WINDOW_EXTENSION 42
+#define APPLE80211_M_AWDL_AVAILABILITY_WINDOW_END       43
 #define APPLE80211_M_AWDL_SYNC_STATE_CHANGED 46
 #define APPLE80211_M_AWDL_PEER_PRESENCE      47
 #define APPLE80211_M_RESET_INTERFACE         49

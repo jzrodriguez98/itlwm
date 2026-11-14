@@ -368,6 +368,12 @@ iwm_rx_mpdu(struct iwm_softc *sc, mbuf_t m, void *pktdata,
     
     phy_info = &sc->sc_last_phy_info;
     rx_res = (struct iwm_rx_mpdu_res_start *)pktdata;
+    // The descriptor, the frame and the 4-byte status word after it must all be present (N04).
+    if (maxlen < sizeof(*rx_res) + sizeof(uint32_t)) {
+        IC2IFP(ic)->netStat->inputErrors++;
+        mbuf_freem(m);
+        return;
+    }
     len = le16toh(rx_res->byte_count);
     if (ic->ic_opmode == IEEE80211_M_MONITOR) {
         /* Allow control frames in monitor mode. */
@@ -383,7 +389,7 @@ iwm_rx_mpdu(struct iwm_softc *sc, mbuf_t m, void *pktdata,
         mbuf_freem(m);
         return;
     }
-    if (len > maxlen - sizeof(*rx_res)) {
+    if (len > maxlen - sizeof(*rx_res) - sizeof(uint32_t)) {
         IC2IFP(ic)->netStat->inputErrors++;
         mbuf_freem(m);
         return;
@@ -837,6 +843,12 @@ iwm_rx_mpdu_mq(struct iwm_softc *sc, mbuf_t m, void *pktdata,
     memset(&rx_status, 0, sizeof(struct ieee80211_rx_status));
     
     desc = (struct iwm_rx_mpdu_desc *)pktdata;
+    // The whole descriptor must be present before any field of it is read (N04).
+    if (maxlen < sizeof(*desc)) {
+        IC2IFP(ic)->netStat->inputErrors++;
+        mbuf_freem(m);
+        return;
+    }
     
     if (!(desc->status & htole16(IWM_RX_MPDU_RES_STATUS_CRC_OK)) ||
         !(desc->status & htole16(IWM_RX_MPDU_RES_STATUS_OVERRUN_OK))) {
@@ -895,6 +907,13 @@ iwm_rx_mpdu_mq(struct iwm_softc *sc, mbuf_t m, void *pktdata,
             IWM_RX_MPDU_RES_STATUS_SEC_CCM_ENC) {
             /* Padding is inserted after the IV. */
             hdrlen += IEEE80211_CCMP_HDRLEN;
+        }
+        // The header, its IV and the two padding bytes must all lie inside the frame.
+        if (hdrlen + 2 > len) {
+            ic->ic_stats.is_rx_tooshort++;
+            IC2IFP(ic)->netStat->inputErrors++;
+            mbuf_freem(m);
+            return;
         }
         
         memmove((uint8_t*)mbuf_data(m) + 2, mbuf_data(m), hdrlen);
@@ -1041,7 +1060,9 @@ iwm_rx_pkt(struct iwm_softc *sc, struct iwm_rx_data *data, struct mbuf_list *ml)
                 break;
                 
             case IWM_REPLY_RX_MPDU_CMD: {
-                size_t maxlen = IWM_RBUF_SIZE - offset - minsz;
+                // This notification's own payload length (checked above against the buffer), not the
+                // space left in the buffer (security audit N04).
+                size_t maxlen = iwm_rx_packet_payload_len(pkt);
                 nextoff = offset +
                 roundup(len, IWM_FH_RSCSR_FRAME_ALIGN);
                 nextpkt = (struct iwm_rx_packet *)

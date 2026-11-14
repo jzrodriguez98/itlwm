@@ -35,7 +35,7 @@
  */
 
 #ifdef AIRPORT_WCL
-#include "../../AirportItlwm/WCL/WCL.hpp"
+#include "../../ForbiddenItlwm/WCL/WCL.hpp"
 #endif
 #include "ItlIwn.hpp"
 #include <linux/types.h>
@@ -2184,6 +2184,15 @@ iwn_rx_done(struct iwn_softc *sc, struct iwn_rx_desc *desc,
         len = letoh16(stat->len);
     }
 
+    /* The frame and its trailing status word must fit in the RX buffer. */
+    if (len < 0 || head < (caddr_t)desc ||
+        (size_t)(head - (caddr_t)desc) + (size_t)len + sizeof(uint32_t) >
+        IWN_RBUF_SIZE) {
+        ic->ic_stats.is_rx_tooshort++;
+        ifp->netStat->inputErrors++;
+        return;
+    }
+
     flags = letoh32(*(uint32_t *)(head + len));
 
     /* Discard frames with a bad FCS early. */
@@ -2566,6 +2575,10 @@ iwn5000_rx_calib_results(struct iwn_softc *sc, struct iwn_rx_desc *desc,
         return;
 
     len = (letoh32(desc->len) & IWN_RX_DESC_LEN_MASK) - 4;
+    /* Reject a length that underflows or runs past the RX buffer. */
+    if (len < (int)sizeof(*calib) ||
+        (size_t)len > IWN_RBUF_SIZE - sizeof(*desc))
+        return;
     bus_dmamap_sync(sc->sc_dmat, data->map, sizeof (*desc), len,
         BUS_DMASYNC_POSTREAD);
 
@@ -3039,8 +3052,10 @@ iwn_notif_intr(struct iwn_softc *sc)
 //    bus_dmamap_sync(sc->sc_dmat, sc->rxq.stat_dma.map,
 //        0, sc->rxq.stat_dma.size, BUS_DMASYNC_POSTREAD);
 
-    hw = letoh16(sc->rxq.stat->closed_count) & 0xfff;
-    while (sc->rxq.cur != hw) {
+    /* Keep the firmware's index inside the ring, and walk it at most once. */
+    hw = (letoh16(sc->rxq.stat->closed_count) & 0xfff) % IWN_RX_RING_COUNT;
+    for (int budget = IWN_RX_RING_COUNT; sc->rxq.cur != hw && budget > 0;
+        budget--) {
         struct iwn_rx_data *data = &sc->rxq.data[sc->rxq.cur];
         struct iwn_rx_desc *desc;
 

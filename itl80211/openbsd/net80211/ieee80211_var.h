@@ -453,13 +453,15 @@ struct ieee80211com {
     uint64_t ic_wcl_rx_packets[4];
 #endif
     void            (*ic_event_handler)(struct ieee80211com *, int, void *);
-    CTimeout*        ic_bgscan_timeout;
+	CTimeout*		ic_bgscan_timeout;
 	uint32_t		ic_bgscan_fail;
 	u_int8_t		ic_myaddr[IEEE80211_ADDR_LEN];
 	struct ieee80211_rateset ic_sup_rates[IEEE80211_MODE_MAX];
 	struct ieee80211_channel ic_channels[IEEE80211_CHAN_MAX+1];
 	u_char			ic_chan_avail[howmany(IEEE80211_CHAN_MAX,NBBY)];
 	u_char			ic_chan_active[howmany(IEEE80211_CHAN_MAX, NBBY)];
+	/* Channels where a beaconing AP was heard on its own channel (beacon hint). */
+	u_char			ic_beacon_hint[howmany(IEEE80211_CHAN_MAX, NBBY)];
 	u_char			ic_chan_scan[howmany(IEEE80211_CHAN_MAX,NBBY)];
 	struct mbuf_queue	ic_mgtq;
 	struct mbuf_queue	ic_pwrsaveq;
@@ -582,8 +584,8 @@ struct ieee80211com {
     
 	TAILQ_HEAD(, ieee80211_ess)	 ic_ess;
 };
-#define    ic_if        ic_ac.ac_if
-#define    ic_softc    ic_if.if_softc
+#define	ic_if		ic_ac.ac_if
+#define	ic_softc	ic_if.if_softc
 
 #ifdef AIRPORT_WCL
 static inline unsigned ieee80211_wcl_ac(unsigned tid)

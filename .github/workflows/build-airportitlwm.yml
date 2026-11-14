@@ -24,7 +24,7 @@ jobs:
       BUILD_TARGET: ${{ inputs.target || 'both' }}
     steps:
       - name: Check out selected branch
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -81,7 +81,7 @@ jobs:
 
       - name: Upload Sequoia kexts
         if: ${{ env.BUILD_TARGET == 'both' || env.BUILD_TARGET == 'sequoia' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: AirportItlwm-Sequoia
           path: |
@@ -91,7 +91,7 @@ jobs:
 
       - name: Upload Tahoe kexts
         if: ${{ env.BUILD_TARGET == 'both' || env.BUILD_TARGET == 'tahoe' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: AirportItlwm-Tahoe
           path: |

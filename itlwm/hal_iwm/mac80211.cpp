@@ -1504,7 +1504,9 @@ iwm_rx_tx_cmd(struct iwm_softc *sc, struct iwm_rx_packet *pkt,
     struct iwm_tx_data *txd;
     struct iwm_tx_resp *tx_resp = (struct iwm_tx_resp *)pkt->data;
     uint32_t ssn;
-    uint32_t len = iwm_rx_packet_len(pkt);
+    // The payload only: iwm_rx_packet_len also counts the 4-byte command header, which let the checks
+    // below pass a response 4 bytes short of what is read (audit HL05, IWM half).
+    uint32_t len = iwm_rx_packet_payload_len(pkt);
     struct iwm_tx_ba *tid_data;
     
     bus_dmamap_sync(sc->sc_dmat, data->map, 0, IWM_RBUF_SIZE,

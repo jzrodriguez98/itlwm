@@ -957,6 +957,12 @@ iwm_scan(struct iwm_softc *sc)
             return err;
         }
     }
+    // A foreground scan replaces any background scan, so net80211's flag goes too. Aborting the firmware's
+    // background scan clears only the driver's own flags, and if this scan then finds nothing to join (after a
+    // disconnect, say), ieee80211_end_scan just scans again without clearing IEEE80211_F_BGSCAN. The flag then
+    // stayed set until the next firmware stop, and the WCL scan path refused every macOS scan as busy, so Wi-Fi
+    // never reconnected until it was turned off and on.
+    ic->ic_flags &= ~IEEE80211_F_BGSCAN;
     
     if (isset(sc->sc_enabled_capa, IWM_UCODE_TLV_CAPA_UMAC_SCAN))
         err = iwm_umac_scan(sc, 0);

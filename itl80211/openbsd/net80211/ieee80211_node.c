@@ -1236,7 +1236,9 @@ ieee80211_node_switch_bss(struct ieee80211com *ic, struct ieee80211_node *ni)
 void
 ieee80211_node_join_bss(struct ieee80211com *ic, struct ieee80211_node *selbs, int force_reauth)
 {
-    XYLog("%s selbs=%s mac=%s chan=%d rssi=%d protos=%d akms=%d ciphers=%d\n", __FUNCTION__, selbs->ni_essid, ether_sprintf(selbs->ni_bssid), ieee80211_chan2ieee(ic, selbs->ni_chan), selbs->ni_rssi, selbs->ni_rsnprotos, selbs->ni_rsnakms, selbs->ni_rsnciphers);
+    /* ni_essid has no terminator (a 32-byte SSID made %s read past it), and -itllog publishes this log:
+     * the SSID's length and the BSSID's last two bytes only (audit HL02, P-S01 class). */
+    XYLog("%s ssid_len=%d mac=..:%02x:%02x chan=%d rssi=%d protos=%d akms=%d ciphers=%d\n", __FUNCTION__, selbs->ni_esslen, selbs->ni_bssid[4], selbs->ni_bssid[5], ieee80211_chan2ieee(ic, selbs->ni_chan), selbs->ni_rssi, selbs->ni_rsnprotos, selbs->ni_rsnakms, selbs->ni_rsnciphers);
     enum ieee80211_phymode mode;
     struct ieee80211_node *ni;
     uint32_t assoc_fail = 0;
@@ -1376,10 +1378,10 @@ ieee80211_node_choose_bss(struct ieee80211com *ic, int bgscan,
      * is usually less saturated.
      */
     if (selbs5 != NULL) {
-        XYLog("%s 5ghz ssid=%s mac=%s rssi=%d\n", __FUNCTION__, selbs5->ni_essid, ether_sprintf(selbs5->ni_bssid), selbs5->ni_rssi);
+        XYLog("%s 5ghz ssid_len=%d mac=..:%02x:%02x rssi=%d\n", __FUNCTION__, selbs5->ni_esslen, selbs5->ni_bssid[4], selbs5->ni_bssid[5], selbs5->ni_rssi);
     }
     if (selbs2 != NULL) {
-        XYLog("%s 2ghz ssid=%s mac=%s rssi=%d\n", __FUNCTION__, selbs2->ni_essid, ether_sprintf(selbs2->ni_bssid), selbs2->ni_rssi);
+        XYLog("%s 2ghz ssid_len=%d mac=..:%02x:%02x rssi=%d\n", __FUNCTION__, selbs2->ni_esslen, selbs2->ni_bssid[4], selbs2->ni_bssid[5], selbs2->ni_rssi);
     }
     if (selbs5 && (*ic->ic_node_checkrssi)(ic, selbs5))
         selbs = selbs5;
@@ -2482,6 +2484,9 @@ void
 ieee80211_setup_vhtopmode(struct ieee80211_node *ni, const uint8_t *ie)
 {
     /* vht operation */
+    /* Short elements are refused here, so no caller can forget the check (audit P-V01). */
+    if (ie == NULL || ie[1] < sizeof(struct ieee80211_ie_vht_operation) - 2)
+        return;
     struct ieee80211_ie_vht_operation *op = (struct ieee80211_ie_vht_operation *)ie;
     ni->ni_vht_chanwidth = op->chan_width;
     ni->ni_vht_chan1 = op->center_freq_seg1_idx;
@@ -2511,6 +2516,9 @@ ieee80211_setup_vhtcaps(struct ieee80211com *ic, struct ieee80211_node *ni, cons
     
     uint32_t own_vhtcap = ic->ic_vhtcaps;
     uint32_t new_vhtcap = 0, peer_vhtcap;
+    /* Short elements are refused here, so no caller can forget the check (audit P-V01). */
+    if (ie == NULL || ie[1] < sizeof(struct ieee80211_ie_vhtcap) - 2)
+        return;
     /* vht capability */
     peer_vhtcap = le32dec(ie + 2);
     /* suppmcs */

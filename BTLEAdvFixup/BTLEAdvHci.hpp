@@ -84,6 +84,10 @@ inline Action onCommand(State &s, const uint8_t *hci, size_t length, bool extend
             s.addressedSets &= ~(1U << hci[3]);
             s.knownSetAddresses &= ~(1U << hci[3]);
             for (unsigned i = 0; i < 6; ++i) s.setAddress[hci[3]][i] = 0;
+            // Without a general address, the fallback came from a set: forget it with the set, so a
+            // re-created set can't get the removed set's address (audit P-R07).
+            if (!s.haveGeneralAddress)
+                s.haveAddress = false;
         }
         break;
     case kOpClearSets:
@@ -91,6 +95,8 @@ inline Action onCommand(State &s, const uint8_t *hci, size_t length, bool extend
         s.knownSetAddresses = 0;
         for (auto &address : s.setAddress)
             for (unsigned i = 0; i < 6; ++i) address[i] = 0;
+        if (!s.haveGeneralAddress)      // audit P-R07
+            s.haveAddress = false;
         break;
     case kOpLeEventMask:
         // Extended scanning reports are bit 12, which bluetoothd leaves off for this chip.
@@ -118,50 +124,143 @@ enum : uint8_t { kEvtLeMeta = 0x3e, kLeMetaReadRemoteFeaturesComplete = 0x04 };
 // The link is up and encrypted when this runs, so the two events describe that link: the handle
 // comes from the completion being replaced. Values are IntelBTPatcher's: 27 octets, 328 us.
 enum : size_t { kPhyUpdateEventLength = 8, kDataLengthEventLength = 13 };
-struct DataLengthState {
-    uint32_t outstanding;  // duplicate commands whose completion hasn't been rewritten yet
-    unsigned stage;        // 0: the real completion, 1: fake PHY update, 2: fake data length
+//
+// The duplicates are tracked per connection handle (audit BT03): with one shared stage, a second link
+// reading remote features while the first link's duplicates were pending reset the stage, and the fake
+// events could carry the wrong handle. An entry that gets no events (a controller may answer a duplicate
+// with a Command Status error only) expires after kDataLengthExpiryNs, so nothing waits forever.
+enum : unsigned { kDataLengthLinks = 8 };
+// At most this many interrupt reads are wrapped per round, whatever else happens (PR #61): a round that
+// never matches can't keep every read of the controller's event pipe wrapped until it expires.
+enum : uint32_t { kMaxWrappedReads = 24 };
+enum : uint64_t { kDataLengthExpiryNs = 2000000000ULL };
+struct DataLengthLink {
+    uint16_t handle;       // 12-bit connection handle
+    uint8_t stage;         // 0: the real completion, 1: fake PHY update, 2: fake data length
+    uint8_t outstanding;   // duplicates whose completion hasn't been rewritten yet; 0 = free slot
+    uint64_t armedNs;      // when the duplicates were sent
 };
-// How many copies of this command to send after it. Only LE Read Remote Features, and a
-// controller start forgets any command still in flight.
-inline unsigned extraRemoteReads(DataLengthState &s, const uint8_t *hci, size_t length) {
+struct DataLengthState {
+    DataLengthLink links[kDataLengthLinks];
+    uint32_t expired;      // entries given up after kDataLengthExpiryNs
+    uint32_t aborts;       // rounds dropped because nothing could be rewritten into a read (PR #61)
+    uint32_t wrapped;      // reads wrapped since the last round was armed
+};
+inline uint16_t dataLengthHandle(uint8_t low, uint8_t high) { return uint16_t((low | high << 8) & 0x0fff); }
+inline DataLengthLink *findLink(DataLengthState &s, uint16_t handle) {
+    for (auto &l : s.links)
+        if (l.outstanding && l.handle == handle)
+            return &l;
+    return nullptr;
+}
+// Frees the entries older than the expiry. Returns whether any entry is still waiting.
+inline bool expireLinks(DataLengthState &s, uint64_t nowNs) {
+    bool waiting = false;
+    for (auto &l : s.links) {
+        if (!l.outstanding)
+            continue;
+        if (nowNs - l.armedNs > kDataLengthExpiryNs) {
+            l = DataLengthLink{};
+            ++s.expired;
+        } else {
+            waiting = true;
+        }
+    }
+    return waiting;
+}
+// Drops every pending link, keeping the counters: used when a read can't be rewritten (a failed transfer,
+// no hold of our own on the buffer, a short write). Which link it belonged to can't be known without
+// reading it, and a dropped round only leaves bluetoothd on the timeout it already had.
+inline void abortLinks(DataLengthState &s) {
+    for (auto &l : s.links)
+        l = DataLengthLink{};
+    ++s.aborts;
+}
+inline bool dataLengthPending(const DataLengthState &s) {
+    for (auto &l : s.links)
+        if (l.outstanding)
+            return true;
+    return false;
+}
+// How many copies of this command to send after it. Only LE Read Remote Features with its handle, and
+// a controller start forgets every command still in flight. With every slot busy, no copies are sent:
+// that link then behaves as it would without this fix.
+inline unsigned extraRemoteReads(DataLengthState &s, const uint8_t *hci, size_t length, uint64_t nowNs) {
     if (!hci || length < 3)
         return 0;
     const uint16_t op = uint16_t(hci[0] | hci[1] << 8);
     if (op == kOpReset) {
+        const uint32_t expired = s.expired, aborts = s.aborts;
         s = DataLengthState{};
+        s.expired = expired;
+        s.aborts = aborts;
         return 0;
     }
-    if (op != kOpLeReadRemoteFeatures)
+    if (op != kOpLeReadRemoteFeatures || length < 5 || hci[2] < 2)
         return 0;
-    s.stage = 0;
-    s.outstanding += 2;
+    expireLinks(s, nowNs);
+    const uint16_t handle = dataLengthHandle(hci[3], hci[4]);
+    DataLengthLink *l = findLink(s, handle);
+    if (!l) {
+        for (auto &free : s.links)
+            if (!free.outstanding) {
+                l = &free;
+                break;
+            }
+        if (!l)
+            return 0;
+    }
+    // A repeated read on the same link starts over: its earlier duplicates are folded into this one.
+    l->handle = handle;
+    l->stage = 0;
+    l->outstanding = 2;
+    l->armedNs = nowNs;
+    s.wrapped = 0;   // a new round starts with a full budget of wrapped reads
     return 2;
 }
+// Whether to wrap an interrupt read: something is waiting, the buffer can hold the longest rewritten
+// event (PR #61), and the round's budget isn't spent. A spent budget drops the round.
+inline bool wrapRead(DataLengthState &s, uint64_t nowNs, size_t bufferLength) {
+    if (!expireLinks(s, nowNs) || bufferLength < kDataLengthEventLength)
+        return false;
+    if (s.wrapped >= kMaxWrappedReads) {
+        abortLinks(s);
+        return false;
+    }
+    ++s.wrapped;
+    return true;
+}
 // A copy that couldn't be sent never produces an event, so it's not waited for.
-inline void forgetRemoteRead(DataLengthState &s) {
-    if (s.outstanding && !--s.outstanding)
-        s.stage = 0;
+inline void forgetRemoteRead(DataLengthState &s, const uint8_t *hci, size_t length) {
+    if (!hci || length < 5)
+        return;
+    DataLengthLink *l = findLink(s, dataLengthHandle(hci[3], hci[4]));
+    if (l && !--l->outstanding)
+        *l = DataLengthLink{};
 }
 // Rewrites one incoming event in place and returns its new size. Everything except a duplicate
-// LE Read Remote Features Complete passes through untouched; the first of the two duplicates
-// becomes PHY Update Complete, the second LE Data Length Change, as in IntelBTPatcher.
+// LE Read Remote Features Complete for a link that is waiting passes through untouched; the first of
+// that link's two duplicates becomes PHY Update Complete, the second LE Data Length Change, as in
+// IntelBTPatcher.
 inline size_t rewriteEvent(DataLengthState &s, uint8_t *event, size_t length) {
-    if (!event || length < 6 || !s.outstanding || event[0] != kEvtLeMeta ||
-        event[2] != kLeMetaReadRemoteFeaturesComplete)
+    if (!event || length < 6 || event[0] != kEvtLeMeta || event[2] != kLeMetaReadRemoteFeaturesComplete)
         return length;
-    if (s.stage == 0) {  // the real completion goes to bluetoothd as it is
-        s.stage = 1;
+    const uint8_t handleLow = event[4], handleHigh = event[5];
+    DataLengthLink *l = findLink(s, dataLengthHandle(handleLow, handleHigh));
+    if (!l)
+        return length;
+    if (l->stage == 0) {  // the real completion goes to bluetoothd as it is
+        l->stage = 1;
         return length;
     }
     // Status 0, both directions 2M.
-    const uint8_t handleLow = event[4], handleHigh = event[5];
-    if (s.stage == 1) {
+    if (l->stage == 1) {
         const uint8_t fake[kPhyUpdateEventLength] = {kEvtLeMeta, 6, 0x0c, 0x00, handleLow, handleHigh, 0x02, 0x02};
         for (unsigned i = 0; i < kPhyUpdateEventLength; ++i)
             event[i] = fake[i];
-        s.stage = 2;
-        --s.outstanding;
+        l->stage = 2;
+        if (!--l->outstanding)
+            *l = DataLengthLink{};
         return kPhyUpdateEventLength;
     }
     // A Data Length Change has no status byte, so the handle moves to parameter 0.
@@ -169,8 +268,7 @@ inline size_t rewriteEvent(DataLengthState &s, uint8_t *event, size_t length) {
                                                   0x1b, 0x00, 0x48, 0x01, 0x1b, 0x00, 0x48, 0x01};
     for (unsigned i = 0; i < kDataLengthEventLength; ++i)
         event[i] = fake[i];
-    s.stage = 0;
-    --s.outstanding;
+    *l = DataLengthLink{};
     return kDataLengthEventLength;
 }
 }

@@ -194,11 +194,20 @@ static u_int32_t ether_crc32_le_update(u_int32_t crc, const u_int8_t *buf, size_
     return (crc);
 }
 
+// Every caller is a log line, and with -itllog the log is published in the I/O Registry, where any
+// local process can read it. Only the last two bytes of an address are printed, as in the driver's own
+// lines (audit HL02): enough to tell devices apart in one log, not enough to identify one. A few
+// buffers in rotation, so two addresses in one call (or two threads) don't overwrite each other.
 static char* ether_sprintf(const uint8_t *ap)
 {
-         static char etherbuf[18];
-         snprintf(etherbuf, sizeof (etherbuf), "%6D", ap, ":");
-         return (etherbuf);
+         static char etherbuf[4][sizeof("..:00:00")];
+         static unsigned int next;
+         char *buf = etherbuf[__atomic_fetch_add(&next, 1, __ATOMIC_RELAXED) & 3];
+         if (ap == NULL)
+                 snprintf(buf, sizeof(etherbuf[0]), "..:??:??");
+         else
+                 snprintf(buf, sizeof(etherbuf[0]), "..:%02x:%02x", ap[4], ap[5]);
+         return (buf);
 }
 
 static void array_sprintf(char *output, uint8_t output_size, const uint8_t *array, const uint8_t len)

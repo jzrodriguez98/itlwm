@@ -6,7 +6,7 @@ One build per macOS version, because the bluetoothd patterns are per build:
 import argparse,hashlib,plistlib,re,subprocess
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
-NAME='BTLEAdvFixup';VERSION='0.9.1';IDENT='org.forbiddenitlwm.'+NAME
+NAME='BTLEAdvFixup';VERSION='0.9.2';IDENT='org.forbiddenitlwm.'+NAME
 def run(c): subprocess.run([str(x) for x in c],check=True)
 def main():
     p=argparse.ArgumentParser();p.add_argument('--out',type=Path,required=True)

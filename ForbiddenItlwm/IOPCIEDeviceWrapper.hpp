@@ -32,7 +32,11 @@ public:
 public:
     ItlHalService *fHalService;
     IOPCIDevice *pciNub;
+    // The HAL for the next controller start: a new one if the last start shut the old one down (P-R02).
+    ItlHalService *halForStart();
 private:
+    int halKind;    // 1 iwx, 2 iwm, 3 iwn
+    static ItlHalService *newHal(int kind);
     // This wrapper holds the driver's one card (see probe).
     bool claimedCard;
 };

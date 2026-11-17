@@ -72,6 +72,14 @@ inline BuildCheck checkBuild(const char *kernelVersion, const char *osBuild) {
     return BuildCheck::UnknownBuild;
 }
 
+// The stronger check, for code that relies on native data layouts the vtable anchors don't cover (the
+// master indication request): the macOS build itself must be on the list and pair with this kernel. A
+// kernel alone isn't enough, because one kernel can ship with more than one IO80211Family (Tahoe 26.7.2
+// and 26.7.3 share one), and a later update could keep the kernel and change the family (audit P-A08).
+inline bool buildPairVerified(const char *kernelVersion, const char *osBuild) {
+    return osBuild && *osBuild && checkBuild(kernelVersion, osBuild) == BuildCheck::Verified;
+}
+
 inline const char *buildCheckName(BuildCheck c) {
     switch (c) {
         case BuildCheck::Verified: return "verified";

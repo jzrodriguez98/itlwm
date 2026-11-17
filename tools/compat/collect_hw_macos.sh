@@ -43,15 +43,29 @@ echo "Collecting. The report will be saved as:"
 echo "  $OUT"
 
 HOST_SHORT=$(scutil --get LocalHostName 2>/dev/null || true)
+COMPUTER_NAME=$(scutil --get ComputerName 2>/dev/null || true)
 USER_NAME=$(id -un 2>/dev/null || true)
-# Replaces MAC addresses, UUIDs, the user name, the home folder and the local host name.
+# A name used as a sed pattern is escaped first: a / . [ or * in it broke or widened the pattern. Names
+# shorter than 3 characters aren't replaced (they'd match all over the report); the user is told to check
+# the file by hand instead (audit T04).
+sed_escape() { printf '%s' "$1" | sed -e 's/[][\/.^$*+?(){}|]/\\&/g'; }
+REDACT_ARGS=(-e 's/([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}/<mac>/g'
+             -e 's/[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}/<uuid>/g')
+SHORT_NAMES=""
+add_redaction() {
+    local value=$1 label=$2
+    [ -n "$value" ] || return 0
+    if [ "${#value}" -lt 3 ]; then SHORT_NAMES="$SHORT_NAMES $label"; return 0; fi
+    REDACT_ARGS+=(-e "s/$(sed_escape "$value")/<$label>/g")
+}
+# Longest first, so the home folder goes before the user name inside it.
+add_redaction "${HOME:-}" home
+add_redaction "$COMPUTER_NAME" host
+add_redaction "$HOST_SHORT" host
+add_redaction "$USER_NAME" user
+# Replaces MAC addresses, UUIDs, the home folder, the computer and local host names and the user name.
 redact() {
-    sed -E \
-        -e 's/([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}/<mac>/g' \
-        -e 's/[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}/<uuid>/g' \
-        -e "s#${HOME:-/nonexistent}#~#g" \
-        ${USER_NAME:+-e "s/${USER_NAME}/<user>/g"} \
-        ${HOST_SHORT:+-e "s/${HOST_SHORT}/<host>/g"}
+    sed -E "${REDACT_ARGS[@]}"
 }
 section() { printf '\n===== %s =====\n' "$1"; }
 
@@ -124,7 +138,7 @@ system_profiler SPAirPortDataType 2>/dev/null | awk -v country="$INCLUDE_COUNTRY
         sub(/^ +/, ""); print; next }
     country == 1 && /Country Code:/ { sub(/^ +/, ""); print }' | redact
 
-section "Channel 149 and country"
+section "Channels 149 and 44, and country"
 # Whether the firmware has a country (ZZ means none) is kept; the code itself only with --include-country.
 CC=$(system_profiler SPAirPortDataType 2>/dev/null | awk -F': ' '/^ *Country Code:/ { print $2; exit }')
 case "$CC" in
@@ -135,8 +149,8 @@ sysctl -n kern.bootargs 2>/dev/null | tr ' ' '\n' | grep -q '^itlwm_cc=' && echo
 # Channels of nearby networks only, by band, without names.
 system_profiler SPAirPortDataType 2>/dev/null | awk '
     /Other Local Wi-Fi Networks:/ { on=1; next }
-    on && /^ *Channel:/ { sub(/^ *Channel: */, ""); c=$1+0; n++; if ($0 ~ /5GHz/) f++; if (c >= 149 && c <= 165) u++; ch[$0]++ }
-    END { printf "Nearby networks listed: %d (%d on 5 GHz, %d on 149 to 165)\n", n, f, u
+    on && /^ *Channel:/ { sub(/^ *Channel: */, ""); c=$1+0; n++; if ($0 ~ /5GHz/) f++; if (c >= 149 && c <= 165) u++; if (c >= 36 && c <= 48) l++; ch[$0]++ }
+    END { printf "Nearby networks listed: %d (%d on 5 GHz, %d on 149 to 165, %d on 36 to 48)\n", n, f, u, l
           for (k in ch) printf "  channel %s: %d\n", k, ch[k] }'
 
 section "AirDrop driver status (only while its build runs)"
@@ -155,3 +169,7 @@ echo "To show it in Finder:  open -R \"$OUT\""
 echo "To read it:            open -e \"$OUT\""
 echo
 echo "Read it before sharing. It should contain no serial numbers, addresses, network names or devices."
+if [ -n "$SHORT_NAMES" ]; then
+    echo "Your$SHORT_NAMES name is shorter than 3 characters, so it wasn't replaced automatically."
+    echo "Search the report for it and remove it by hand before sharing."
+fi

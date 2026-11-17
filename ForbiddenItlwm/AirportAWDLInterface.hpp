@@ -120,6 +120,16 @@ private:
     // These are desired host settings, not an active radio schedule. Native
     // synchronization/state/frame operations remain unsupported.
     IOLock *configurationLock = nullptr;
+    // Allocated on first use, race-free, so every path that needs the lock has it whatever runs first
+    // (audit D01, P-R05). Freed in free().
+    IOLock *ensureConfigurationLock() {
+        if (!configurationLock) {
+            IOLock *fresh = IOLockAlloc();
+            if (fresh && !OSCompareAndSwapPtr(nullptr, fresh, reinterpret_cast<void * volatile *>(&configurationLock)))
+                IOLockFree(fresh);
+        }
+        return configurationLock;
+    }
     ItlAWDLFrameTemplate frameTemplate;
     uint8_t localFrameAddress[6] = {};
     bool dataCopyProbeEnabled = false;
@@ -139,6 +149,9 @@ private:
     static constexpr unsigned transmitFrameCapacity = 4096, transmitFrameDefault = 128;
     unsigned transmitFrameCount = transmitFrameDefault;
     TransmitFrame *transmitFrames = nullptr;
+    // Size of the allocation above, kept apart from transmitFrameCount, which a second initialisation
+    // can change (audit D03).
+    size_t transmitFramesBytes = 0;
     unsigned transmitHead = 0, transmitQueued = 0, transmitDropped = 0, transmitAccepted = 0;
     unsigned transmitHeldShort = 0;  // Short frames kept in order behind a paused or full aggregate queue.
     unsigned transmitPopped = 0, transmitHeldMark = 0;

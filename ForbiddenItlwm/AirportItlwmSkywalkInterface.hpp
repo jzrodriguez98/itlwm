@@ -9,6 +9,7 @@
 #ifndef AirportItlwmSkywalkInterface_hpp
 #define AirportItlwmSkywalkInterface_hpp
 
+#include <ItlScanCursor.hpp>
 #ifdef AIRPORT_WCL
 #include "WCL/WCL.hpp"
 #endif
@@ -115,7 +116,7 @@ public:
     virtual bool init(IOService *) AIRPORT_SKYWALK_OVERRIDE;
 //    virtual ifnet_t getBSDInterface(void) AIRPORT_SKYWALK_OVERRIDE;
     
-    void associateSSID(uint8_t *ssid, uint32_t ssid_len, const struct ether_addr &bssid, uint32_t authtype_lower, uint32_t authtype_upper, uint8_t *key, uint32_t key_len, int key_index);
+    IOReturn associateSSID(uint8_t *ssid, uint32_t ssid_len, const struct ether_addr &bssid, uint32_t authtype_lower, uint32_t authtype_upper, uint8_t *key, uint32_t key_len, int key_index);
     void setPTK(const u_int8_t *key, size_t key_len);
     void setGTK(const u_int8_t *key, size_t key_len, u_int8_t kid, u_int8_t *rsc);
     
@@ -435,6 +436,7 @@ private:
     void updateWCLLinkQuality(bool = false);
     static void wclJoinTimeout(OSObject *, IOTimerEventSource *);
     IOReturn beginWCLScan(apple80211ScanRequest *);
+    IOReturn startWCLScan(apple80211ScanRequest *);
     void clearWCLPMKSA();
     IOReturn installWCLKey(apple80211_key *);
     IOReturn accessWCLRSN(apple80211_rsn_ie_data *, bool);
@@ -486,9 +488,10 @@ private:
     ItlHalService *fHalService;
     
     //IO80211
-    struct ieee80211_node *fNextNodeToSend;
     IOTimerEventSource *scanSource;
-    bool fScanResultWrapping;
+    // Scan-result cursor: the MAC address of the last node returned, not a pointer kept between requests
+    // (audit ST02: the node could be freed in between). include/ItlScanCursor.hpp.
+    ItlScan::Cursor fScanCursor;
     
     u_int32_t current_authtype_lower;
     u_int32_t current_authtype_upper;

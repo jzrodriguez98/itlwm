@@ -89,6 +89,14 @@ public:
     virtual IOService* probe(IOService* provider, SInt32* score) override;
     virtual bool start(IOService *provider) override;
     bool startDriver(IOService *provider);
+    // What startDriver has done so far, for failStart (audit P-A07).
+    struct StartProgress {
+        bool superStarted;
+        bool halAttached;
+        bool netIfAttached;      // fNetIf->attach(this)
+        bool interfaceAttached;  // attachInterface(fNetIf, this)
+    };
+    bool failStart(IOService *provider, const StartProgress &progress);
     virtual void stop(IOService *provider) override;
     virtual IOReturn enable(IO80211SkywalkInterface *netif) AIRPORT_LEGACY_OVERRIDE;
     virtual IOReturn disable(IO80211SkywalkInterface *netif) AIRPORT_LEGACY_OVERRIDE;
@@ -277,8 +285,6 @@ public:
     IO80211VirtualInterface *fAWDLInterface;
     bool awdlInterfaceTest;
     bool awdlExtendFrames;
-    // -itlawdlhideinfra (test, #24): sync frames leave out the Mac's Wi-Fi network and channel.
-    bool awdlHideInfra;
     uint16_t awdlProbeSequence = 0;
     bool awdlManagementInputEnabled;
     UInt32 awdlManagementActive;

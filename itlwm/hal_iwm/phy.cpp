@@ -157,9 +157,14 @@ iwm_phy_db_set_section(struct iwm_softc *sc,
     struct iwm_phy_db_entry *entry;
     uint16_t chg_id = 0;
     
+    // The caller checked that size bytes of data are in the notification. A channel-group section
+    // starts with its 16-bit group ID (audit HL05, IWM half).
     if (type == IWM_PHY_DB_CALIB_CHG_PAPD ||
-        type == IWM_PHY_DB_CALIB_CHG_TXP)
+        type == IWM_PHY_DB_CALIB_CHG_TXP) {
+        if (size < sizeof(uint16_t))
+            return EINVAL;
         chg_id = le16toh(*(uint16_t *)phy_db_notif->data);
+    }
     
     entry = iwm_phy_db_get_section(sc, type, chg_id);
     if (!entry)

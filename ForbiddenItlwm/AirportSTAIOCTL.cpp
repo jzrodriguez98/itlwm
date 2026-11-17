@@ -1323,6 +1323,36 @@ getRADIO_INFO(OSObject *object, struct apple80211_radio_info_data* md)
     return kIOReturnSuccess;
 }
 
+// Scan diagnostic (#20, #24, #34: macOS's scans end with results=0). ItlwmScanStats counts requests, refusals
+// (result list still being read = "wrap", interface not up yet = "init"), and results handed back per list.
+static uint32_t staScanRequests, staScanWrap, staScanInit, staScanAccepted, staScanLists, staScanEmptyLists,
+    staScanResults, staScanLastCount, staScanCount;
+
+static void staScanPublish(IOService *service)
+{
+    char text[160];
+    snprintf(text, sizeof(text), "req=%u ok=%u wrap=%u init=%u lists=%u empty=%u results=%u last=%u",
+             staScanRequests, staScanAccepted, staScanWrap, staScanInit, staScanLists, staScanEmptyLists,
+             staScanResults, staScanLastCount);
+    service->setProperty("ItlwmScanStats", text);
+}
+
+static IOReturn staScanRefusal(IOService *service, struct ieee80211com *ic, bool wrapping)
+{
+    ++staScanRequests;
+    IOReturn result = kIOReturnSuccess;
+    if (wrapping) {
+        ++staScanWrap;
+        result = 22;
+    } else if (ic->ic_state <= IEEE80211_S_INIT) {
+        ++staScanInit;
+        result = 22;
+    } else
+        ++staScanAccepted;
+    staScanPublish(service);
+    return result;
+}
+
 IOReturn AirportItlwm::
 setSCAN_REQ(OSObject *object,
                             struct apple80211_scan_data *sd)
@@ -1340,10 +1370,8 @@ setSCAN_REQ(OSObject *object,
           sd->ssid,
           ether_sprintf(sd->bssid.octet));
 #endif
-    if (fScanResultWrapping)
-        return 22;
-    if (ic->ic_state <= IEEE80211_S_INIT)
-        return 22;
+    if (IOReturn refused = staScanRefusal(this, ic, fScanResultWrapping))
+        return refused;
     if (sd->scan_type == APPLE80211_SCAN_TYPE_FAST || sd->scan_type == APPLE80211_SCAN_TYPE_PASSIVE) {
         if (scanSource) {
             scanSource->setTimeoutMS(100);
@@ -1378,10 +1406,8 @@ setSCAN_REQ_MULTIPLE(OSObject *object, struct apple80211_scan_multiple_data *sd)
     for (i = 0; i < sd->ssid_count; i++)
         XYLog("%s index=%d ssid=%s ssid_len=%d\n", __FUNCTION__, i, sd->ssids[i].ssid_bytes, sd->ssids[i].ssid_len);
 #endif
-    if (fScanResultWrapping)
-        return 22;
-    if (ic->ic_state <= IEEE80211_S_INIT)
-        return 22;
+    if (IOReturn refused = staScanRefusal(this, ic, fScanResultWrapping))
+        return refused;
     ieee80211_begin_cache_bgscan(&ic->ic_ac.ac_if);
     if (scanSource) {
         scanSource->setTimeoutMS(100);
@@ -1398,13 +1424,24 @@ getSCAN_RESULT(OSObject *object, struct apple80211_scan_result **sr)
     if (fNextNodeToSend == NULL) {
         if (fScanResultWrapping) {
             fScanResultWrapping = false;
+            ++staScanLists;
+            staScanLastCount = staScanCount;
+            staScanCount = 0;
+            staScanPublish(this);
             return 5;
         } else {
             fNextNodeToSend = RB_MIN(ieee80211_tree, &ic->ic_tree);
-            if (fNextNodeToSend == NULL)
+            if (fNextNodeToSend == NULL) {
+                ++staScanLists;
+                ++staScanEmptyLists;
+                staScanLastCount = staScanCount = 0;
+                staScanPublish(this);
                 return 12;
+            }
         }
     }
+    ++staScanCount;
+    ++staScanResults;
 //    XYLog("%s ni_bssid=%s ni_essid=%s channel=%d flags=%d asr_cap=%d asr_nrates=%d asr_ssid_len=%d asr_ie_len=%d asr_rssi=%d\n", __FUNCTION__, ether_sprintf(fNextNodeToSend->ni_bssid), fNextNodeToSend->ni_essid, ieee80211_chan2ieee(ic, fNextNodeToSend->ni_chan), ieeeChanFlag2apple(fNextNodeToSend->ni_chan->ic_flags), fNextNodeToSend->ni_capinfo, fNextNodeToSend->ni_rates.rs_nrates, fNextNodeToSend->ni_esslen, fNextNodeToSend->ni_rsnie_tlv == NULL ? 0 : fNextNodeToSend->ni_rsnie_tlv_len, fNextNodeToSend->ni_rssi);
     apple80211_scan_result* result = (apple80211_scan_result* )fNextNodeToSend->verb;
     bzero(result, sizeof(*result));

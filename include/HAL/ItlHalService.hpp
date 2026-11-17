@@ -58,6 +58,13 @@ public:
 
 public:
     virtual bool initWithController(IOEthernetController *controller, IOWorkLoop *workloop, IOCommandGate *commandGate);
+
+    // Drops what initWithController took (the controller, work loop and gate references, the sleep lock)
+    // and, with VT-d, the DMA arena. Called by the controller's releaseAll(), after detach(), so the HAL
+    // no longer keeps a stopped controller alive through a reference cycle, and from free(). A shut-down
+    // HAL is never started again: the PCI wrapper makes a new one (audit P-R02).
+    void shutdown();
+    bool isShutDown() const { return shutDown; }
     
 protected:
     
@@ -74,9 +81,12 @@ protected:
 #ifdef AIRPORT_VTD
     bool prepareDma(IOPCIDevice *device, uint8_t addressBits);
     ItlDmaArena *dmaArena;
+#endif
+    // In every build: detach sets dmaDetaching under the gate before anything is freed, and the transmit
+    // and command paths refuse while it is set. These were VT-d only, so the Sonoma kext had no such
+    // guard (audit HL01). Zero from OSObject allocation.
     uint64_t dmaEpoch;
     bool dmaDetaching;
-#endif
     
 private:
     IOEthernetController *controller;
@@ -87,6 +97,7 @@ private:
     lck_grp_attr_t *inner_gp_attr;
     lck_attr_t *inner_attr;
     lck_mtx_t *inner_lock;
+    bool shutDown;
 };
 
 #endif /* ItlHalService_hpp */

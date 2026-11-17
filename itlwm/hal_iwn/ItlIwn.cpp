@@ -1937,6 +1937,10 @@ iwn_newstate(struct ieee80211com *ic, enum ieee80211_state nstate, int arg)
         sc->calib.state = IWN_CALIB_STATE_INIT;
         if (sc->sc_flags & IWN_FLAG_BGSCAN)
             that->iwn_scan_abort(sc);
+        // Leaving RUN ends any background scan, so net80211's flag goes too: the abort clears only the
+        // driver's flags, and a following scan that finds nothing never clears IEEE80211_F_BGSCAN, which made
+        // the WCL scan path refuse every macOS scan as busy until Wi-Fi was turned off and on.
+        ic->ic_flags &= ~IEEE80211_F_BGSCAN;
     }
 
     if (ic->ic_state == IEEE80211_S_SCAN) {

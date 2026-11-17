@@ -1,5 +1,55 @@
 # Changelog
 
+## 0.6.0-beta.1
+
+The first beta of 0.6.0. Everything since 0.5.4-beta.2, including what 0.6.0-alpha.1 tested:
+
+**AirDrop**
+- **Channel 44 ([#17](https://github.com/retropineaple/ForbiddenItlwm/issues/17), [PR #21](https://github.com/retropineaple/ForbiddenItlwm/pull/21), [#35](https://github.com/retropineaple/ForbiddenItlwm/issues/35), thanks to zheznanohana).** Apple devices use channel 149 or 44 for AirDrop, each by its own country rules: in Japan, Germany and Russia, for example, iPhones use 44, even where 149 is allowed. The listener used to stay on 149 or fall back to 6. Now, once the driver has heard the iPhone, it follows it: to 44 (at 80 MHz over 36–48 where the firmware allows it, else 20 MHz) if the iPhone uses 44, otherwise 149, then 6. `ITLAWDLCoexPeer5GHz` shows the channel the iPhone uses. Confirmed in Japan at 26 MB/s Mac → iPhone.
+- **Faster Mac → iPhone on the same channel ([#22](https://github.com/retropineaple/ForbiddenItlwm/issues/22), [#24](https://github.com/retropineaple/ForbiddenItlwm/issues/24), [PR #47](https://github.com/retropineaple/ForbiddenItlwm/pull/47), thanks to WarnerATCN).** When the Mac's Wi-Fi was on the listener's channel, the iPhone never accepted block ack, so Mac → iPhone went out one frame at a time. A short receive window while asking for block ack fixes it, and is on by default. `-itlawdlnosamechprobe` turns it off.
+- **Mac → iPhone sends no longer stall after the iPhone was idle ([PR #57](https://github.com/retropineaple/ForbiddenItlwm/pull/57), thanks to wh0ami7).** The listener's receive filter now follows the iPhone's firmware station.
+- **AirDrop's listener survives Wi-Fi reconnects ([PR #12](https://github.com/retropineaple/ForbiddenItlwm/pull/12), thanks to mingww64).** It starts only once the Wi-Fi connection is fully up, removing it waits for a setup still in progress, and a failure to remove it switches AirDrop off until the next firmware restart instead of restarting the firmware.
+- **Passive channels next to your Wi-Fi.** Where the firmware marks a channel passive but usable beside a connected network (as in Japan for 36–48), the listener may use it while the Mac's Wi-Fi is connected in the same channel group, following Linux's rule for Wi-Fi Direct interfaces. `-itlawdlnoirconcurrent` turns it off.
+- **No 80 MHz overlap with your router ([#26](https://github.com/retropineaple/ForbiddenItlwm/issues/26)).** If the Mac's Wi-Fi uses the listener's 80 MHz block with another main channel (a router on 157 at 80 MHz, for example), the listener uses its channel at 20 MHz; inside a 160 MHz router channel it moves elsewhere.
+
+**Wi-Fi**
+- **Wi-Fi reconnects after macOS drops it** (#20, #63). When macOS disconnected Wi-Fi itself (switching or logging out of an account, for example) during one of the driver's background scans, the driver then refused every scan macOS asked for, so Wi-Fi never came back until it was turned off and on. Fixed, and on Tahoe and Sequoia the driver now also tells the router it's leaving, so the next join works on the first try. On the project's hackintosh Wi-Fi rejoins in about 10 s after an account switch.
+- **Link quality and signal ([PR #1](https://github.com/retropineaple/ForbiddenItlwm/pull/1), thanks to mingww64):** macOS's link quality goes back to "off" when the driver stops; on Tahoe the measured noise and signal-to-noise are reported where the card's firmware provides them.
+
+**Security**
+- A review of 0.6.0-alpha.1 found and fixed problems in code that handles frames from nearby devices, requests from macOS, firmware messages and Bluetooth events. Most are in the Sonoma kext, whose Wi-Fi code takes paths the Tahoe and Sequoia kexts don't use: a 32-character network name returned bytes from kernel memory, scan results used memory that could already be freed, and shutdown freed memory while the hardware could still use it. On all kexts: more length checks on frames and firmware messages, AirDrop's announcement from macOS copied once and checked, a refused Wi-Fi join no longer leaves the Mac set up for an open network of that name, and failed starts clean up after themselves. The driver's log no longer holds network names, Wi-Fi handshakes or full Wi-Fi addresses. How to report security problems: [SECURITY.md](SECURITY.md).
+
+**BTLEAdvFixup 0.9.2**
+- The new-LE-device pairing fix no longer takes over the Bluetooth controller's event pipe when a pairing round doesn't finish, and no longer writes to a buffer it couldn't prepare ([PR #61](https://github.com/retropineaple/ForbiddenItlwm/pull/61), thanks to takoyakiwhite). With 0.9.1 that could leave USB devices unresponsive until a cold boot, or panic.
+- Pairing rounds are tracked per connection and given up after 2 s, so two devices pairing at once don't mix up their events.
+- It no longer edits the Bluetooth stack's own request structure, and a removed advertising set no longer leaves its address to the next one.
+
+**Diagnostics and tools**
+- `-itllog` keeps the driver's own log, readable after a failed wake (it can still hold Wi-Fi addresses; see BOOT-FLAGS). Scan counters for missing networks (`ItlwmScanStats`, #20, #24, #45), on every kext including Sonoma, and the channel lists macOS gets.
+- `check_compat.sh` checks channels 36–48 as well as 149–161, counts a listener on 44 at 80 MHz as the fast mode, shows which channel your iPhone uses, and checks whether pf has turned off macOS's user-space network path, which can slow AirDrop's QUIC transfers; on Tahoe OpenCore's PowerTimeoutKernelPanic quirk causes it ([PR #59](https://github.com/retropineaple/ForbiddenItlwm/pull/59), thanks to kevineduardo).
+- The hardware report scripts list channels 36–48 and handle unusual user and computer names; `airdrop_measure.sh` works under any locale (#21).
+
+**Removed:** 0.5.3's test flags `-itlawdlbaaskshared` and `-itlawdlhideinfra`. Neither helped; they're ignored now.
+
+**Docs:** keep `-itlawdlcoexmulti` where channel 149 isn't available (the listener now follows the iPhone to 44); known limitations: AirDrop needs the Mac to be on a Wi-Fi network, and the WPA2/WPA3 transition behaviour; `bluetoothd` crashing after hours (#62); the diagnostic flags.
+
+**Tested on the project's hackintosh** (Tahoe 26.7.1, AX211, listener on 149): the release build runs, AirDrop at 16–23 MB/s both ways across this release's test builds, Wi-Fi rejoins in 8–13 s after an account switch, Bluetooth audio works. Channel 44 was confirmed by a tester in Japan, and 0.6.0-alpha.1 by testers on Sequoia. The Sequoia and Sonoma builds are built and checked offline; on Sonoma, AirDrop doesn't start yet ([#55](https://github.com/retropineaple/ForbiddenItlwm/issues/55)).
+
+## 0.6.0-alpha.1 (test build)
+
+A test build of 0.6.0's main changes, released to collect results. **Alpha** means it's for testers: it was tested on the project's hackintosh only where that hackintosh can test it (channel 149, Tahoe).
+
+- **Channel 44 ([#17](https://github.com/retropineaple/ForbiddenItlwm/issues/17), [PR #21](https://github.com/retropineaple/ForbiddenItlwm/pull/21), [#35](https://github.com/retropineaple/ForbiddenItlwm/issues/35), thanks to zheznanohana).** Apple devices use channel 149 or 44 for AirDrop, and each picks one by its own country rules: in Japan, Germany and Russia, for example, iPhones use 44, even where 149 is allowed. The listener stayed on 149 or fell back to 6, so the iPhone rarely met it. Now, once the driver has heard the iPhone, the listener follows it: to 44 (at 80 MHz over 36–48 where the firmware allows it, else 20 MHz) if the iPhone uses 44, otherwise 149 as before, then 6. The iPhone's own Wi-Fi channel isn't mistaken for its AirDrop channel. `ITLAWDLCoexPeer5GHz` shows the channel the iPhone uses.
+- **Faster Mac → iPhone on the same channel ([#22](https://github.com/retropineaple/ForbiddenItlwm/issues/22), [#24](https://github.com/retropineaple/ForbiddenItlwm/issues/24), [PR #47](https://github.com/retropineaple/ForbiddenItlwm/pull/47)).** When the Mac's Wi-Fi was on the listener's channel, the iPhone never accepted block ack, so Mac → iPhone went out one frame at a time. The fix (a short receive window while asking for block ack), tested by three testers on 149 and 44, is now on by default. `-itlawdlnosamechprobe` turns it off.
+- **Mac → iPhone sends no longer stall after the iPhone was idle ([PR #57](https://github.com/retropineaple/ForbiddenItlwm/pull/57), thanks to wh0ami7).** After a minute without data the iPhone ends its receive session, but its station stays for 10 minutes; in between, the listener's receive filter opened up and sends could hang. The filter now follows the station.
+- **Passive channels next to your Wi-Fi.** Where the firmware marks a channel passive but usable beside a connected network (as in Japan for 36–48), the listener may use it while the Mac's own Wi-Fi is connected on a channel in the same group, following Linux's rule for Wi-Fi Direct interfaces. `-itlawdlnoirconcurrent` turns it off.
+- **No 80 MHz overlap with your router ([#26](https://github.com/retropineaple/ForbiddenItlwm/issues/26)).** If the Mac's Wi-Fi uses the listener's 80 MHz block with another main channel (for example a router on 157 at 80 MHz), the listener now uses its channel at 20 MHz; inside a 160 MHz router channel it moves elsewhere. Beacon hints a country change doesn't affect are kept.
+- **Diagnostics:** scan counters for missing networks (`ItlwmScanStats`, #20, #24, #45), the channel lists macOS gets, and `-itllog`, which keeps the driver's log readable after a failed wake.
+- **Tools:** `check_compat.sh` checks channels 36–48 as well as 149–161, counts a listener on 44 at 80 MHz as the fast mode, shows which channel your iPhone uses, and no longer says AirDrop must stay on channel 6 in countries without 149. The hardware report scripts list channels 36–48 too.
+- **Removed:** 0.5.3's test flags `-itlawdlbaaskshared` and `-itlawdlhideinfra`. Neither helped; they're ignored now.
+- **Tested on the project's hackintosh** (Tahoe 26.7.1, AX211, listener on 149): Wi-Fi works, AirDrop at 15–25 MB/s iPhone → Mac and 8–20 MB/s Mac → iPhone, no change on 149 from the new channel logic. Channel 44 needs testers in Japan, Germany or Russia. The Sequoia and Sonoma builds are built and checked offline.
+- BTLEAdvFixup is unchanged (0.9.1).
+
 ## 0.5.4-beta.2
 
 - **BTLEAdvFixup 0.9.1: new Bluetooth LE mice and keyboards pair again ([#27](https://github.com/retropineaple/ForbiddenItlwm/issues/27), [#31](https://github.com/retropineaple/ForbiddenItlwm/pull/31), thanks to CreateRan).** With IntelBTPatcher disabled, a new LE mouse or keyboard connected but never finished pairing, because BTLEAdvFixup didn't include IntelBTPatcher's fix for it. It does now, including lshbluesky's LE Data Length Change fix for Tahoe. Devices that were already paired weren't affected.
@@ -135,7 +185,7 @@ First public beta.
 - AirDrop between an Intel Wi-Fi Mac and an iPhone, both ways, while normal Wi-Fi stays connected.
 - Tested on an Intel AX211 with macOS 26.7.1 (25G241). About 22 MB/s each way when the iPhone's schedule allows it.
 - Based on AirportItlwm 2.4.1 for macOS Tahoe.
-- The AirDrop-enabled build keeps the product name `AirportItlwm.kext` and bundle identifier `com.zxystd.AirportItlwm`.
+- Upstream names its product `ForbiddenItlwm.kext`; this fork retains `AirportItlwm.kext` and `com.zxystd.AirportItlwm` so it replaces the fork’s existing AirportItlwm product in place.
 - BTLEAdvFixup 0.8.0, bundle identifier `org.forbiddenitlwm.BTLEAdvFixup`.
 - `-itlawdlcoexlowlat` is disabled because it broke Wi-Fi on the AX211.
 

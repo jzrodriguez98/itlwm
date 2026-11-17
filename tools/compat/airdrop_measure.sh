@@ -15,6 +15,9 @@
 # When ForbiddenItlwm's AirDrop build is running, it also reads the listener's state after each transfer.
 
 set -u
+# Byte-wise text handling: under a Japanese or Chinese locale awk printed "towc: multibyte conversion
+# failure" for some log lines (#21). The other compat scripts do the same.
+export LC_ALL=C
 MODE=stream
 LAST=""
 CSV=""

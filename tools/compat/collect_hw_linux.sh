@@ -40,16 +40,28 @@ OUT="$OUT_DIR_ABS/${OUT##*/}"
 echo "Collecting. The report will be saved as:"
 echo "  $OUT"
 HOST_SHORT=$(hostname -s 2>/dev/null || true)
+HOST_FULL=$(hostname 2>/dev/null || true)
 USER_NAME=${SUDO_USER:-$(id -un 2>/dev/null || true)}
 
+# A name used as a sed pattern is escaped first, and names shorter than 3 characters aren't replaced
+# (they'd match all over the report); the user is told to check by hand instead (audit T04).
+sed_escape() { printf '%s' "$1" | sed -e 's/[][\/.^$*+?(){}|]/\\&/g'; }
+REDACT_ARGS=(-e 's/([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}/<mac>/g'
+             -e 's/[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}/<uuid>/g'
+             -e 's/(Serial Number|[Ss]erial)[ :=]+[^ ]+/\1 <removed>/g'
+             -e 's/(SSID|ssid)[ :=]+.*/\1 <removed>/g')
+SHORT_NAMES=""
+add_redaction() {
+    local value=$1 label=$2
+    [ -n "$value" ] || return 0
+    if [ "${#value}" -lt 3 ]; then SHORT_NAMES="$SHORT_NAMES $label"; return 0; fi
+    REDACT_ARGS+=(-e "s/$(sed_escape "$value")/<$label>/g")
+}
+add_redaction "$HOST_FULL" host
+add_redaction "$HOST_SHORT" host
+add_redaction "$USER_NAME" user
 redact() {
-    sed -E \
-        -e 's/([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}/<mac>/g' \
-        -e 's/[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}/<uuid>/g' \
-        -e 's/(Serial Number|[Ss]erial)[ :=]+[^ ]+/\1 <removed>/g' \
-        -e 's/(SSID|ssid)[ :=]+.*/\1 <removed>/g' \
-        ${USER_NAME:+-e "s/${USER_NAME}/<user>/g"} \
-        ${HOST_SHORT:+-e "s/${HOST_SHORT}/<host>/g"}
+    sed -E "${REDACT_ARGS[@]}"
 }
 section() { printf '\n===== %s =====\n' "$1"; }
 have() { command -v "$1" >/dev/null 2>&1; }
@@ -109,9 +121,9 @@ else
     echo "iw isn't installed. Install the 'iw' package and run this again for the capability list."
 fi
 
-section "Channel 149 to 161 (needed for AirDrop at 80 MHz)"
+section "Channels 149 to 161 and 36 to 48 (AirDrop at 80 MHz on 149 or 44)"
 # "no IR" means listen-only: the firmware hasn't learned a country that allows transmitting there.
-if have iw; then iw list 2>/dev/null | grep -E '\[(149|153|157|161|165)\]' | sed 's/^[[:space:]]*//' | sort -u; fi
+if have iw; then iw list 2>/dev/null | grep -E '\[(36|40|44|48|149|153|157|161|165)\]' | sed 's/^[[:space:]]*//' | sort -u; fi
 
 section "Regulatory"
 if have iw; then
@@ -140,3 +152,7 @@ echo "To read it:  less \"$OUT\""
 echo "On a live USB, copy it to a USB stick or cloud folder before shutting down, or it will be lost."
 echo
 echo "Read it before sharing. It should contain no serial numbers, addresses, network names or host names."
+if [ -n "$SHORT_NAMES" ]; then
+    echo "Your$SHORT_NAMES name is shorter than 3 characters, so it wasn't replaced automatically."
+    echo "Search the report for it and remove it by hand before sharing."
+fi

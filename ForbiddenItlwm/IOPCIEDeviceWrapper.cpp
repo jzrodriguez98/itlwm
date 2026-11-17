@@ -82,9 +82,9 @@ probe(IOService *provider, SInt32 *score)
         claimedCard = true;
     }
     // probe can run more than once; keep the HAL already made for this device.
+    halKind = kind;
     if (!fHalService)
-        fHalService = kind == 1 ? static_cast<ItlHalService *>(new ItlIwx) :
-            kind == 2 ? static_cast<ItlHalService *>(new ItlIwm) : static_cast<ItlHalService *>(new ItlIwn);
+        fHalService = newHal(kind);
     // findPCICapability returns the capability register's value (0 when absent) and writes the
     // offset through its pointer. 0.4.0 and 0.4.1 used the value as the offset: the low byte is the
     // capability ID, so they wrote config offsets 0x13 and 0x07 instead of the MSI-X and MSI control
@@ -109,6 +109,23 @@ probe(IOService *provider, SInt32 *score)
     return this;
 }
 
+ItlHalService *IOPCIEDeviceWrapper::newHal(int kind)
+{
+    return kind == 1 ? static_cast<ItlHalService *>(new ItlIwx) :
+        kind == 2 ? static_cast<ItlHalService *>(new ItlIwm) : static_cast<ItlHalService *>(new ItlIwn);
+}
+
+ItlHalService *IOPCIEDeviceWrapper::halForStart()
+{
+    // A HAL whose controller stopped (or failed to start) is shut down: its detach left the device
+    // quiesced and its DMA state gone, so it starts again only as a new object (audit P-R02).
+    if (fHalService && fHalService->isShutDown()) {
+        OSSafeReleaseNULL(fHalService);
+        fHalService = newHal(halKind);
+    }
+    return fHalService;
+}
+
 void IOPCIEDeviceWrapper::free()
 {
     OSSafeReleaseNULL(fHalService);
@@ -129,7 +146,10 @@ start(IOService *provider)
     }
     IOLog("%s::super start succeed\n", getName());
     UInt8 builtIn = 0;
-    setProperty("built-in", OSData::withBytes(&builtIn, sizeof(builtIn)));
+    if (OSData *builtInData = OSData::withBytes(&builtIn, sizeof(builtIn))) {   // released (audit P-A07)
+        setProperty("built-in", builtInData);
+        builtInData->release();
+    }
     PMinit();
     registerPowerDriver(this, powerStateArray, 2);
     provider->joinPMtree(this);

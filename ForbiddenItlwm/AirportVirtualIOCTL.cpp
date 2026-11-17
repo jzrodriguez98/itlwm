@@ -296,6 +296,18 @@ getCHANNELS_INFO(OSObject *object, struct apple80211_channels_info *data)
                 break;
         }
     }
+    // Diagnostic (#21): when macOS asks on this path, and what 6, 36, 44 and 149 looked like then:
+    // '-' not listed, 'a' active, 'p' passive, 'd' radar.
+    static uint32_t queries;
+    char last[48];
+    auto state = [ic](unsigned ch) {
+        const ieee80211_channel &c = ic->ic_channels[ch];
+        if (!c.ic_freq) return '-';
+        return (c.ic_flags & IEEE80211_CHAN_DFS) ? 'd' : (c.ic_flags & IEEE80211_CHAN_PASSIVE) ? 'p' : 'a';
+    };
+    snprintf(last, sizeof(last), "#%u 6=%c 36=%c 44=%c 149=%c", ++queries, state(6), state(36), state(44),
+             state(149));
+    setProperty("ItlwmChannelsInfoVirtualLast", last);
     return kIOReturnSuccess;
 }
 

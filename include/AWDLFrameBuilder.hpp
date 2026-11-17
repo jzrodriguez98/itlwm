@@ -101,39 +101,4 @@ inline BuildResult buildLocalFrame(const LocalFrame &p, uint8_t *output,
     *written = required;
     return BuildResult::Ready;
 }
-// -itlawdlhideinfra (test, #24): removes the sender's infrastructure fields from a Data Path State TLV
-// (type 12) in a run of TLVs, so peers don't learn which Wi-Fi network and channel the Mac is on. After
-// the 2-byte flags the fields follow in this order, as seemoo-lab/owl parses them: country (0x0100,
-// 3 bytes), social channel map (0x0200, 2), infrastructure BSSID and channel (0x0001, 8), infrastructure
-// address (0x0002, 6). Only those two fields are removed, their flag bits cleared and the TLV and run
-// shortened; a TLV too short for the fields its flags announce is left alone. True if anything changed.
-inline bool stripDataPathInfra(uint8_t *tlvs, size_t *length)
-{
-    if (!tlvs || !length) return false;
-    for (size_t off = 0; off + 3 <= *length;) {
-        size_t valueLength = read16(tlvs + off + 1);
-        if (valueLength > *length - off - 3) return false;
-        if (tlvs[off] == 12 && valueLength >= 2) {
-            uint8_t *value = tlvs + off + 3;
-            uint16_t flags = uint16_t(value[0] | value[1] << 8);
-            if (!(flags & 0x0003)) return false;
-            size_t at = 2;
-            if (flags & 0x0100) at += 3;
-            if (flags & 0x0200) at += 2;
-            const size_t cut = ((flags & 0x0001) ? 8 : 0) + ((flags & 0x0002) ? 6 : 0);
-            if (at + cut > valueLength) return false;
-            const size_t tail = *length - (off + 3 + at + cut);
-            for (size_t i = 0; i < tail; ++i)
-                value[at + i] = value[at + cut + i];
-            *length -= cut;
-            valueLength -= cut;
-            flags = uint16_t(flags & ~0x0003);
-            write16(value, flags);
-            write16(tlvs + off + 1, uint16_t(valueLength));
-            return true;
-        }
-        off += 3 + valueLength;
-    }
-    return false;
-}
 } // namespace ItlAWDL

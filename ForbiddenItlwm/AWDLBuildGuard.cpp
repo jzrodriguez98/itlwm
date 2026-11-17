@@ -14,6 +14,7 @@
 
 #include <IOKit/IOLib.h>
 #include <libkern/version.h>
+#include <sys/sysctl.h>
 #include <AWDLBuildGuard.hpp>
 
 #if !defined(ITL_AWDL_NATIVE)
@@ -131,9 +132,29 @@ bool itlAWDLBuildAllowed()
 // True only for a kernel on the verified list whose table matched. Code that relies on native data
 // layouts the vtable anchors don't cover (such as the master indication request) needs this, not
 // just itlAWDLBuildAllowed(): an "expected" or -itlawdlanybuild build stays off.
+//
+// gVerified only says the kernel is on the list. The macOS build must pair with it too (audit P-A08);
+// kern.osversion can still be empty when the driver starts, so it's read here, when first needed (the
+// peer manager's start), and the answer kept once the build is known.
 bool itlAWDLBuildVerified()
 {
-    return itlAWDLBuildAllowed() && gVerified;
+    static int pairVerified = -1;
+    static char statusText[96];
+    if (!itlAWDLBuildAllowed() || !gVerified)
+        return false;
+    if (pairVerified >= 0)
+        return pairVerified == 1;
+    char osBuild[32] = {};
+    size_t length = sizeof(osBuild) - 1;
+    if (sysctlbyname("kern.osversion", osBuild, &length, nullptr, 0) != 0 || !osBuild[0])
+        return false;   // not known yet: stays off, asked again next time
+    pairVerified = ItlAWDL::buildPairVerified(version, osBuild) ? 1 : 0;
+    if (!pairVerified) {
+        snprintf(statusText, sizeof(statusText), "allowed: kernel verified, macOS build %s not verified", osBuild);
+        gStatus = statusText;
+        IOLog("ForbiddenItlwm: AirDrop %s; the master indication copy stays off\n", gStatus);
+    }
+    return pairVerified == 1;
 }
 
 const char *itlAWDLBuildStatus()

@@ -132,10 +132,10 @@ ieee80211_proto_detach(struct _ifnet *ifp)
 void
 ieee80211_print_essid(const u_int8_t *essid, int len)
 {
-	int i;
-	const u_int8_t *p;
-
-    XYLog("%s\n", essid);
+	/* The SSID isn't a C string (callers pass beacon elements and 32-byte fields), and the log can be
+	 * published with -itllog: print the length only (audit HL02, P-S01 class). */
+	(void)essid;
+	XYLog("[ssid, %d bytes]", len);
 //	if (len > IEEE80211_NWID_LEN)
 //		len = IEEE80211_NWID_LEN;
 //	/* determine printable or not */

@@ -20,8 +20,8 @@ Kexts used with ForbiddenItlwm:
 
 | Kext | Version |
 | --- | --- |
-| ForbiddenItlwm | 0.1.0-beta1, 0.2.0-beta1, 0.4.0-beta1's changes in development builds, and 0.5.0-test1 (Tahoe) |
-| BTLEAdvFixup | 0.8.0, 0.8.2's changes in a development build, 0.9.0 and 0.9.1 (Tahoe) |
+| ForbiddenItlwm | 0.1.0-beta1, 0.2.0-beta1, 0.4.0-beta1's changes in development builds, 0.5.0-test1, 0.6.0-alpha.1's changes in a development build, and 0.6.0-beta.1 (Tahoe, listener on 149) |
+| BTLEAdvFixup | 0.8.0, 0.8.2's changes in a development build, 0.9.0, 0.9.1 and 0.9.2 (Tahoe) |
 | Lilu | 1.7.2 |
 | IntelBluetoothFirmware | 2.5.1 |
 | BlueToolFixup | 2.7.3 |
@@ -62,7 +62,7 @@ Which macOS builds AirDrop starts on, and what is known about each. Each macOS v
 | Sequoia | 15.8.1 (24H32) | Runs a verified kernel, so the build check passes. **AirDrop works both ways with 0.5.1-test1**, reported by users (AX201, AX210; [#13](https://github.com/retropineaple/ForbiddenItlwm/issues/13), [#22](https://github.com/retropineaple/ForbiddenItlwm/issues/22)) |
 | Sequoia | 15.8.2 (24H232) | Same kernel as 15.8.3, so the build check passes. BTLEAdvFixup's patterns match. **AirDrop works both ways with 0.5.1-test1**, reported by a user (AX201, [issue #7](https://github.com/retropineaple/ForbiddenItlwm/issues/7)). Earlier versions didn't send |
 | Sequoia | 15.8.3 (24H241) | Wi-Fi side verified offline from Apple's Kernel Debug Kit, BTLEAdvFixup's patterns from Apple's installer. **AirDrop works both ways with 0.5.1-test1**, reported by a user (AX201, [#16](https://github.com/retropineaple/ForbiddenItlwm/issues/16)) |
-| Sonoma | 14.8.9 (23J631) | Test builds from 0.5.0-test1. Wi-Fi side verified offline from Apple's Kernel Debug Kit, BTLEAdvFixup's patterns from Apple's installer. Not tested on hardware yet |
+| Sonoma | 14.8.9 (23J631) | Test builds from 0.5.0-test1. Wi-Fi side verified offline from Apple's Kernel Debug Kit, BTLEAdvFixup's patterns from Apple's installer. First hardware report (0.5.4-beta.2, AX210, [#55](https://github.com/retropineaple/ForbiddenItlwm/issues/55)): the build check passes and the listener starts on 149, but macOS doesn't ask for `awdl0` (`ItlwmAWDLCreateRequests` 0), so AirDrop doesn't work yet |
 | Sonoma | Other 14.4 to 14.8.x builds | The Sonoma kext runs as plain Wi-Fi; AirDrop stays off |
 | Any other build | | AirDrop stays off and normal Wi-Fi works |
 
@@ -85,12 +85,27 @@ Users on Reddit and GitHub have reported:
 | Intel AX200 (AMD Ryzen 5 5600H laptop) | macOS Sequoia 15.6, with 0.4.1-beta1 plus local fixes, including the 0.5.1 pool-type fix: AirDrop works both ways on 149 at 80 MHz (issue #19) |
 | Intel AX201 (Comet Lake-H, HP) | macOS Sequoia 15.8.3, with 0.5.1-test1: AirDrop works both ways (issue #16) |
 | Intel AX201 (Comet Lake-H, MSI) | macOS Sequoia 15.8.1, with 0.5.1: AirDrop works both ways (issue #13) |
-| Intel AX210 (AMD Ryzen 7 5800H laptop) | macOS Sequoia 15.8.1, with 0.5.1-test1: AirDrop works both ways; Mac → iPhone slower (issue #22) |
+| Intel AX210 (AMD Ryzen 7 5800H laptop) | macOS Sequoia 15.8.1, with 0.5.1-test1: AirDrop works both ways; Mac → iPhone slower (issue #22). With 0.5.3-test1: AirDrop and Handoff work, AirPlay from it to a Mac mini works, Sidecar works over USB but not over Wi-Fi (issue #42) |
 | Intel AX210 (Xiaomi Mi Notebook Pro) | macOS 26.7.2, with 0.5.0-test1: AirDrop works both ways, listener on 149 at 80 MHz in China (issue #18) |
 | Intel AX201 (Tiger Lake-H, Dell G15) | macOS 26.7.3, with 0.5.0-test1: AirDrop works both ways; on channel 6 in Japan (issue #23) |
 | Intel AX201 (Tiger Lake, dynabook G83) | macOS Sequoia 15.8.3, with 0.5.3-test1: AirDrop works both ways, also with an iPad, and iPad → Mac AirPlay works. On a network without 149, Mac → iPad works only without `-itlawdlcoexmulti` (issue #29) |
 | Intel AX210 (Dell Precision 5540) | macOS 26.7.3, with 0.5.3-test1: Mac → iPhone works; iPhone → Mac stalls on large photos and videos (issue #26, open) |
 | Intel AX411 class (AX1690i) | macOS 26.7.2, with 0.4.1-beta1: AirDrop works both ways, on channel 6 (issue #15) |
+| Intel AX211 (Lenovo ThinkPad E16 Gen 3, Raptor Lake, PCI 8086:51F1) | macOS 26.7.1, with 0.3.1-test1: AirDrop works both ways (issue #6, which found the frame padding fixed in that build) |
+| Intel AX210 (Lenovo ThinkPad E14 Gen 5, AMD) | macOS 26.7.3, with 0.5.3-test1: the driver runs and the checks pass; AirDrop untested, no Apple device at hand (issue #43) |
+| Intel AX210 | macOS 26.7.2, with 0.5.4-beta.2: AirDrop works both ways; Sidecar and Universal Control fail (issue #56, same cause as #42) |
+| Intel AX200 (MacBookPro16,4 SMBIOS) | macOS 26.7.2, with BTLEAdvFixup 0.9.1: a new Bluetooth LE mouse pairs and stays connected (PR #31) |
+| Intel AX210 (discrete, VT-d) | macOS 26.7.3: two nights of scheduled sleep with the full AirDrop flag set, no sleep or wake failures, Wi-Fi rejoins 6 s after wake (issue #38) |
+| Intel AX211 | macOS 26.7.3, with the same-channel fix (PR #47): Mac → iPhone 27–33 MB/s instead of 3–4 MB/s (PR #47) |
+| Intel AX210 (desktop, Intel NUC8i7HVK) | macOS 26.7.3, with the same-channel fix (PR #47): 19–26 MiB/s with the iPhone's network on 149 (issue #24) |
+| Intel AX201 | macOS 26.7.3, with 0.6.0-alpha.1 in Japan: listener on channel 44 at 80 MHz, Mac → iPhone 26 MB/s, iPhone → Mac 27.6 MB/s (issues #17, #21) |
+| Intel AX201 (Lenovo AIO, Tiger Lake) | macOS Sequoia 15.8.2, with 0.6.0-alpha.1 in China: iPhone → Mac about 40 MB/s, Mac → iPhone 27–31 MB/s, block ack agreed (issue #24). With 0.5.4-beta.2: Handoff works, but its badge shows an old device name; Instant Hotspot doesn't (issue #40) |
+| Intel AX211 (Dell XPS) | macOS 26.7.3, with 0.6.0-alpha.1 in the UK, router on 44: iPhone → Mac works on 44 (it didn't on 0.5.4); Mac → iPhone stalls (issues #17, #63, open) |
+| Intel AX201 (CNVi, Alder Lake or newer) | macOS 26.7.3: AirDrop with an iPad works both ways; with 0.6.0-alpha.1 and an iPhone 17 Pro it fails (issue #45, open) |
+| Intel AX210 | Sonoma 14.8.9, with 0.5.4-beta.2: the listener starts, but `awdl0` isn't created (issue #55, open) |
+| Intel AX201 (MSI, Tiger Lake) | macOS 26.7.1, with 0.5.4-beta.2: the devices find each other, but transfers fail; no AirDrop data from the iPhone arrives (issue #53, open) |
+| Intel AX210 (AMD Ryzen 9 7945HX) | macOS 26.7.2, with 0.5.4-beta.2: AirDrop finds nothing; the iPhone sends no data to the Mac (issue #46, open) |
+| Intel AX211 (desktop) | macOS Sequoia: Wi-Fi and Bluetooth work, AirDrop and Handoff don't (issue #35, open) |
 
 The project hasn't verified these reports. The platforms, and which features were tried, vary between them.
 
@@ -98,7 +113,7 @@ The project hasn't verified these reports. The platforms, and which features wer
 
 - Other Intel cards, and other laptops with an AX211, beyond the user reports above
 - Other macOS builds, and 26.7.2 and 26.7.3 on the project's own hackintosh
-- **macOS Sequoia on the project's own hackintosh.** The Sequoia build was verified offline from the 15.8 and 15.8.3 Kernel Debug Kits, and in the user reports so far (above) Wi-Fi works. with 0.5.1-test1 users report AirDrop working both ways on 15.8.2 (#7) and 15.6 (#19)
-- **macOS Sonoma (test build).** Verified offline from the 14.8.9 Kernel Debug Kit; nobody has booted it yet
-- iPads, other iPhones, other Macs
-- Sleep and wake during a transfer, and long-term stability
+- **macOS Sequoia on the project's own hackintosh.** The Sequoia build was verified offline from the 15.8 and 15.8.3 Kernel Debug Kits, and in the user reports so far (above) Wi-Fi works. With 0.5.1-test1 users report AirDrop working both ways on 15.8.2 (#7) and 15.6 (#19), and with 0.6.0-alpha.1 on 15.8.2 at up to 40 MB/s (#24)
+- **macOS Sonoma (test build).** Verified offline from the 14.8.9 Kernel Debug Kit. One user booted it (#55): Wi-Fi and the listener start, AirDrop doesn't yet
+- iPads, other iPhones, other Macs (users report iPads working, #29 and #45, and AirPlay to a Mac mini, #42; AirDrop with a Mac as the other device isn't confirmed, #33)
+- Sleep and wake (one user report without problems: #38), sleep during a transfer, and long-term stability

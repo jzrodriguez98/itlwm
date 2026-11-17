@@ -15,6 +15,17 @@
 
 namespace AirportWCL {
 
+// The kernel's IFNET_LQM_THRESH_OFF: link quality "off".
+constexpr int32_t kLinkQualityOff = -2;
+
+template <typename Report>
+inline void resetLinkQuality(int32_t &reported, Report report) {
+    if (!reported)
+        return;
+    report(kLinkQualityOff);
+    reported = 0;
+}
+
 enum class MacUpdate { Invalid, Unchanged, Busy, Change };
 inline MacUpdate planMacUpdate(const uint8_t *current, const uint8_t *requested,
                                size_t length, bool initializing) {
@@ -81,12 +92,21 @@ static_assert(offsetof(SequoiaLqmUpdate, rssi) == 4, "Sequoia LQM RSSI offset");
 // the RSSI valid flag and the int32 at 4 the RSSI in dBm, which it stores as the link's current RSSI.
 // Without them WCL sees 0 dBm, airportd rates en0's LinkQuality "off" (-2), and apsd then treats Wi-Fi
 // as unusable, so push, iMessage and other Apple services can't connect. Beacon reception is the
-// only other part filled; the remaining radio measurements stay invalid.
+// only other part filled unless measured SNR/noise are available. Those offsets
+// were tested only on Tahoe 26.7.2/26.7.3 (25G332/25G342), not 26.7.1.
+// Population remains enabled on Tahoe; 26.7.1 still needs validation.
+// Core RSSI and CCA stay invalid.
 struct LqmBeaconUpdate {
     uint8_t rssiValid;
     uint8_t reserved0[3];
     int32_t rssi;
-    uint8_t prefix[0x28 - 8];
+    uint8_t reservedCore[3];                     // 0x08..0x0a
+    uint8_t snrValid;                            // 0x0b
+    int16_t snr;                                 // 0x0c
+    uint8_t noiseValid;                          // 0x0e
+    uint8_t reservedPad;
+    int16_t noise;                               // 0x10
+    uint8_t prefix[0x28 - 0x12];                 // includes unused CCA
     uint32_t receivedDelta;
     uint32_t scheduledDelta;
     uint8_t beaconValid;
@@ -96,6 +116,10 @@ struct LqmBeaconUpdate {
     uint8_t tail[2];
 };
 static_assert(sizeof(LqmBeaconUpdate) == 0x1dc, "WCL LQM update size");
+static_assert(offsetof(LqmBeaconUpdate, snrValid) == 0x0b, "WCL SNR valid offset");
+static_assert(offsetof(LqmBeaconUpdate, snr) == 0x0c, "WCL SNR offset");
+static_assert(offsetof(LqmBeaconUpdate, noiseValid) == 0x0e, "WCL noise valid offset");
+static_assert(offsetof(LqmBeaconUpdate, noise) == 0x10, "WCL noise offset");
 static_assert(offsetof(LqmBeaconUpdate, receivedDelta) == 0x28, "WCL beacon delta offset");
 static_assert(offsetof(LqmBeaconUpdate, rssi) == 4, "WCL LQM RSSI offset");
 static_assert(offsetof(LqmBeaconUpdate, beaconValid) == 0x30, "WCL beacon valid offset");
@@ -108,6 +132,18 @@ inline bool makeBeaconUpdate(uint32_t receivedDelta, LqmBeaconUpdate &out)
     out.receivedDelta = receivedDelta;
     out.beaconValid = out.snapshotValid = out.countersValid = 1;
     return true;
+}
+
+inline void setBeaconRadio(LqmBeaconUpdate &out, int32_t rssi, int16_t noise) {
+    // sc_noise is 0 before statistics and -127 when no antenna has a reading.
+    if (rssi >= 0 || noise >= 0 || noise < -120)
+        return;
+    const int32_t snr = rssi - noise;
+    if (snr < INT16_MIN || snr > INT16_MAX)
+        return;
+    out.noiseValid = out.snrValid = 1;
+    out.noise = noise;
+    out.snr = static_cast<int16_t>(snr);
 }
 
 struct DriverAvailability {
@@ -417,6 +453,8 @@ inline size_t selectWPA2TransitionMode(uint8_t *ies, size_t length) {
     if (converted) {
         for (size_t offset = 0; offset + 2 <= length; ) {
             const size_t size = size_t(ies[offset + 1]) + 2;
+            if (size > length - offset)     // never past the list, whatever ran before (audit P-W01)
+                break;
             if (ies[offset] == 244) {
                 memmove(ies + offset, ies + offset + size, length - offset - size);
                 length -= size;

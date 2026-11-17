@@ -6,11 +6,12 @@
 //  Copyright © 2023 钟先耀. All rights reserved.
 //
 
+#include "ItlCountedCopy.hpp"
 #include "AirportItlwmV2.hpp"
 
 // Build marker shown as ItlwmAWDLInterfaceBuild; tools/build.py sets it per macOS target.
 #ifndef ITL_FORBIDDEN_BUILD
-#define ITL_FORBIDDEN_BUILD "forbidden-0.5.0-test1"
+#define ITL_FORBIDDEN_BUILD "unmarked"   // tools/build.py always sets it (audit T05)
 #endif
 
 // -itlawdlsamples: raw samples of native requests, templates and packets in the registry. They can hold
@@ -170,13 +171,28 @@ void ItlAWDLInterface::storeMasterIndication(const apple80211_awdl_oob_request *
     memcpy(&source, raw + 0x30, sizeof(source));
     // Only ever a kernel buffer from the peer manager, and never over its capacity.
     if (reinterpret_cast<uintptr_t>(source) < 0xffffff8000000000ULL || !length || length > sizeof(masterIndication) ||
-        !ItlAWDL::masterIndicationWellFormed(source, length)) {
+        !ensureConfigurationLock()) {
         ++masterIndicationRejected;
         setProperty("ItlwmAWDLMiRejected", masterIndicationRejected, 32);
         return;
     }
-    memcpy(masterIndication, source, length);
+    // Read the peer manager's buffer exactly once, into our own copy, and validate, store and sample only
+    // that copy: the bytes checked are the bytes used, even if the source changes meanwhile (audit P-R05).
+    auto *local = static_cast<uint8_t *>(IOMalloc(length));
+    if (!local)
+        return;
+    memcpy(local, source, length);
+    if (!ItlAWDL::masterIndicationWellFormed(local, length)) {
+        IOFree(local, length);
+        ++masterIndicationRejected;
+        setProperty("ItlwmAWDLMiRejected", masterIndicationRejected, 32);
+        return;
+    }
+    // The reader (copyMasterIndication) takes the same lock.
+    IOLockLock(configurationLock);
+    memcpy(masterIndication, local, length);
     masterIndicationLength = length;
+    IOLockUnlock(configurationLock);
     ++masterIndicationUpdates;
     if (masterIndicationUpdates == 1 || !(masterIndicationUpdates % 64))
         setProperty("ItlwmAWDLMiUpdates", masterIndicationUpdates, 32);
@@ -184,11 +200,12 @@ void ItlAWDLInterface::storeMasterIndication(const apple80211_awdl_oob_request *
     // Keep the current template, since its first version is small and has no services.
     if (awdlRawSamples && masterIndicationSampledLength != length) {
         masterIndicationSampledLength = length;
-        if (auto *sample = OSData::withBytes(source, length)) {
+        if (auto *sample = OSData::withBytes(local, length)) {
             setProperty("ItlwmAWDLMiSample", sample);
             sample->release();
         }
     }
+    IOFree(local, length);
 }
 
 extern unsigned itlAWDLFixedChannel();
@@ -209,15 +226,25 @@ static bool itlAWDLTwoStreams()
 
 bool ItlAWDLInterface::copyMasterIndication(uint8_t *output, size_t capacity, size_t *written)
 {
-    if (!masterIndicationLength || !output || !written || !capacity)
+    if (!masterIndicationLength || !output || !written || !capacity || !configurationLock)
         return false;
+    // A consistent snapshot under the lock the setter takes (audit P-R05), then the build outside it.
+    auto *mi = static_cast<uint8_t *>(IOMalloc(sizeof(masterIndication)));
+    if (!mi)
+        return false;
+    IOLockLock(configurationLock);
+    const size_t miLength = masterIndicationLength;
+    memcpy(mi, masterIndication, miLength);
+    IOLockUnlock(configurationLock);
     // Built in scratch and copied only on success: a failure partway through must leave the caller's
     // buffer, which holds the ordinary frame's template, exactly as it was.
     auto *scratch = static_cast<uint8_t *>(IOMalloc(capacity));
-    if (!scratch)
+    if (!scratch) {
+        IOFree(mi, sizeof(masterIndication));
         return false;
+    }
     size_t length = 0;
-    const bool built = ItlAWDL::buildMasterIndicationTLVs(masterIndication, masterIndicationLength, localFrameAddress,
+    const bool built = miLength && ItlAWDL::buildMasterIndicationTLVs(mi, miLength, localFrameAddress,
                                                           scratch, capacity, &length, uint8_t(itlAWDLFixedChannel()),
                                                           uint8_t(itlAWDLChannelClass()), itlAWDLTwoStreams());
     if (built && length <= capacity) {
@@ -227,6 +254,7 @@ bool ItlAWDLInterface::copyMasterIndication(uint8_t *output, size_t capacity, si
         setProperty("ItlwmAWDLMiBuildFailed", true);
     }
     IOFree(scratch, capacity);
+    IOFree(mi, sizeof(masterIndication));
     return built && length <= capacity;
 }
 
@@ -419,6 +447,26 @@ void ItlAWDLInterface::noteQueueState(const char *key)
     setProperty(key, state);
 }
 
+// Size of each buffer in the awdl0 packet pools (the PoolOptions in initializeNetwork use it).
+static constexpr UInt32 kItlAWDLPacketBufferSize = 2048;
+
+// The frame inside an outbound packet: one buffer, and the data offset plus length within that buffer.
+// The transmit copy trusted both (audit P-A03), and the sample ignored the offset (audit D02).
+static const uint8_t *itlPacketFrame(ItlSkywalkPacketView *packet, UInt32 *lengthOut)
+{
+    if (!packet || !lengthOut || packet->getPacketBufferCount() != 1)
+        return nullptr;
+    const auto *base = reinterpret_cast<const uint8_t *>(packet->getDataVirtualAddress());
+    if (!base)
+        return nullptr;
+    const UInt32 offset = itlPacketGetDataOffset(packet);
+    const UInt32 length = packet->getDataLength();
+    if (!ItlCopy::frameInBuffer(offset, length, kItlAWDLPacketBufferSize))
+        return nullptr;
+    *lengthOut = length;
+    return base + offset;
+}
+
 void ItlAWDLInterface::noteTransmit(IOSkywalkPacket *const *packets, UInt32 count)
 {
     ++transmitCallbacks;
@@ -428,11 +476,9 @@ void ItlAWDLInterface::noteTransmit(IOSkywalkPacket *const *packets, UInt32 coun
         setProperty("ItlwmAWDLTxPacketsOffered", transmitPackets, 32);
     }
     if (!awdlRawSamples || transmitSampled || !packets || !count || !packets[0]) return;
-    auto *packet = reinterpret_cast<ItlSkywalkPacketView *>(packets[0]);
-    const UInt32 length = packet->getDataLength();
-    if (!length || !packet->getPacketBufferCount()) return;
-    const auto *bytes = reinterpret_cast<const uint8_t *>(packet->getDataVirtualAddress());
-    if (!bytes) return;
+    UInt32 length = 0;
+    const auto *bytes = itlPacketFrame(reinterpret_cast<ItlSkywalkPacketView *>(packets[0]), &length);
+    if (!bytes || !length) return;
     transmitSampled = true;
     if (auto *sample = OSData::withBytes(bytes, min(length, 128U))) {
         setProperty("ItlwmAWDLTxSample", sample);
@@ -446,15 +492,13 @@ UInt32 ItlAWDLInterface::acceptTransmit(IOSkywalkPacket *const *packets, UInt32 
 {
     UInt32 accepted = 0;
     for (; accepted < count && transmitDoneCount < transmitFrameCount; ++accepted) {
-        auto *packet = reinterpret_cast<ItlSkywalkPacketView *>(packets[accepted]);
-        const UInt32 length = packet ? packet->getDataLength() : 0;
-        const auto *base = packet && packet->getPacketBufferCount() ?
-            reinterpret_cast<const uint8_t *>(packet->getDataVirtualAddress()) : nullptr;
+        UInt32 length = 0;
+        const auto *bytes = itlPacketFrame(reinterpret_cast<ItlSkywalkPacketView *>(packets[accepted]), &length);
         bool queued = false;
-        if (base && length >= 14 && length <= sizeof(transmitFrames->bytes) && transmitFrames &&
+        if (bytes && length >= 14 && length <= sizeof(transmitFrames->bytes) && transmitFrames &&
             transmitQueued < transmitFrameCount) {
             auto &frame = transmitFrames[(transmitHead + transmitQueued) % transmitFrameCount];
-            memcpy(frame.bytes, base + itlPacketGetDataOffset(packet), length);
+            memcpy(frame.bytes, bytes, length);
             frame.length = uint16_t(length);
             ++transmitQueued;
             queued = true;
@@ -578,12 +622,21 @@ void ItlAWDLInterface::drainTransmitDone()
 
 void ItlAWDLInterface::releaseNetworkResources()
 {
-    // In the queues' work loop, like serviceTransmit, so the two never run at once.
-    if (queueWorkLoop && transmitDoneCount)
+    // In the queues' work loop, like serviceTransmit, so the two never run at once. Always, and in one
+    // action: stop accepting, disable the submission queue, then drain. Before, the drain ran only if packets
+    // were held when checked outside the loop, and transmit stayed on until the queues were removed below,
+    // so a callback in between parked packets nothing would complete (audit P-R03).
+    if (queueWorkLoop)
         queueWorkLoop->runAction([](OSObject *owner, void*, void*, void*, void*) -> IOReturn {
-            static_cast<ItlAWDLInterface *>(owner)->drainTransmitDone();
+            auto *self = static_cast<ItlAWDLInterface *>(owner);
+            self->dataTransmitEnabled = false;
+            if (self->addedQueues > 0 && self->packetQueues[0])
+                self->packetQueues[0]->disable();
+            self->drainTransmitDone();
             return kIOReturnSuccess;
         }, this);
+    else
+        dataTransmitEnabled = false;
     transmitQueued = 0;
     transmitHead = 0;
     if (registrationAttempted) {
@@ -614,6 +667,12 @@ void ItlAWDLInterface::noteClientEvent(const char *what, IOService *client, long
     absolutetime_to_nanoseconds(mach_absolute_time(), &now);
     char process[32] = {};
     proc_selfname(process, sizeof(process));
+    // Open, close and the BSD attach can run on different threads: one lock for the row, the counter and
+    // the published list (audit D01).
+    IOLock *lock = ensureConfigurationLock();
+    if (!lock)
+        return;
+    IOLockLock(lock);
     const char *name = client && client->getMetaClass() ? client->getMetaClass()->getClassName() : "-";
     char *entry = clientEvents[clientEventCount % clientEventCapacity];
     int used = snprintf(entry, sizeof(clientEvents[0]), "%llu ms %s %s r=%ld inactive=%d proc=%s",
@@ -640,6 +699,7 @@ void ItlAWDLInterface::noteClientEvent(const char *what, IOService *client, long
         list->release();
     }
     setProperty("ItlwmAWDLClientEventCount", clientEventCount, 32);
+    IOLockUnlock(lock);
 }
 
 bool ItlAWDLInterface::handleOpen(IOService *client, IOOptionBits options, void *argument)
@@ -686,8 +746,9 @@ void ItlAWDLInterface::free()
     else
         releaseNetworkResources();
     if (transmitFrames) {
-        IOFree(transmitFrames, sizeof(TransmitFrame) * transmitFrameCount);
+        IOFree(transmitFrames, transmitFramesBytes);
         transmitFrames = nullptr;
+        transmitFramesBytes = 0;
     }
     if (configurationLock) {
         IOLockFree(configurationLock);
@@ -710,9 +771,7 @@ IOReturn ItlAWDLInterface::initializeNetwork(IO80211Controller *controller,
     };
     if (!controller || !workLoop || nativeStarted)
         return kIOReturnBadArgument;
-    if (!configurationLock)
-        configurationLock = IOLockAlloc();
-    if (!configurationLock)
+    if (!ensureConfigurationLock())
         return kIOReturnNoMemory;
     static_assert(sizeof(address) == sizeof(localFrameAddress), "native AWDL address size");
     memcpy(localFrameAddress, &address, sizeof(localFrameAddress));
@@ -753,10 +812,10 @@ IOReturn ItlAWDLInterface::initializeNetwork(IO80211Controller *controller,
         requestedPool >= 896 && requestedPool <= 8192)
         txPoolPackets = uint32_t(requestedPool);
     const IOSkywalkPacketBufferPool::PoolOptions txOptions = {
-        txPoolPackets, txPoolPackets, 2048, 1, 4096, 0, 0
+        txPoolPackets, txPoolPackets, kItlAWDLPacketBufferSize, 1, 4096, 0, 0
     };
     const IOSkywalkPacketBufferPool::PoolOptions options = {
-        128, 128, 2048, 1, 4096, 0, 0
+        128, 128, kItlAWDLPacketBufferSize, 1, 4096, 0, 0
     };
     // Pool type: IOSkywalkFamily turns 0 into KBIF_QUANTUM and 2 into KBIF_BUFFER_ON_DEMAND. On Sequoia
     // (XNU 11417) and Sonoma, a quantum pool gets quantum metadata, which nx_check_pp refuses for a network
@@ -891,7 +950,15 @@ IOReturn ItlAWDLInterface::initializeNetwork(IO80211Controller *controller,
         if (PE_parse_boot_argn("itlawdltxqueue", &requestedQueue, sizeof(requestedQueue)) &&
             requestedQueue >= int(transmitFrameDefault) && requestedQueue <= int(transmitFrameCapacity))
             transmitFrameCount = unsigned(requestedQueue);
+        // A second initialisation of the same object frees the first array instead of leaking it (audit D03).
+        if (transmitFrames) {
+            IOFree(transmitFrames, transmitFramesBytes);
+            transmitFrames = nullptr;
+            transmitFramesBytes = 0;
+        }
         transmitFrames = static_cast<TransmitFrame *>(IOMalloc(sizeof(TransmitFrame) * transmitFrameCount));
+        if (transmitFrames)
+            transmitFramesBytes = sizeof(TransmitFrame) * transmitFrameCount;
         dataTransmitEnabled = transmitFrames != nullptr;
         setProperty("ItlwmAWDLTxQueueFrames", transmitFrameCount, 32);
     }
@@ -998,7 +1065,7 @@ IOReturn AirportItlwm::buildAWDLSyncProbe(mbuf_t *packet, uint64_t nowUS)
 {
 #if defined(ITL_AWDL_NATIVE)
     static uint32_t awdlSyncMIBuilt, awdlSyncPSFBuilt, awdlSyncFallbackBuilt, awdlSyncMIWanted, awdlSyncMIMissing,
-        awdlSyncPeerTLVsRefused, awdlSyncFailed, awdlSyncInfraStripped;
+        awdlSyncPeerTLVsRefused, awdlSyncFailed;
     if (!packet || *packet) return kIOReturnBadArgument;
     if (!awdlInterfaceTest || !_fWorkloop || !_fWorkloop->inGate() ||
         !awdlManagementInputEnabled || !fAWDLInterface) {
@@ -1051,11 +1118,6 @@ IOReturn AirportItlwm::buildAWDLSyncProbe(mbuf_t *packet, uint64_t nowUS)
         }
         off += 3+count;
     }
-    // -itlawdlhideinfra: macOS's Data Path State TLV names the Mac's Wi-Fi network and channel. With the
-    // Mac's Wi-Fi on the listener's channel, the iPhone never answered our Block Ack request (#24); this
-    // test leaves that information out, in both the template and the master indication.
-    if (valid && awdlHideInfra && ItlAWDL::stripDataPathInfra(snapshot->staticTLVs, &snapshot->templateLength))
-        ++awdlSyncInfraStripped;
     // After the check above, which still refuses a native channel-sequence TLV.
     if (valid && !isMI && awdlExtendFrames &&
         !ItlAWDL::extendWithPeerTLVs(snapshot->staticTLVs, &snapshot->templateLength,
@@ -1121,8 +1183,6 @@ IOReturn AirportItlwm::buildAWDLSyncProbe(mbuf_t *packet, uint64_t nowUS)
         setProperty("ItlwmAWDLSyncMIMissing", awdlSyncMIMissing, 32);
         setProperty("ItlwmAWDLSyncPeerTLVsRefused", awdlSyncPeerTLVsRefused, 32);
         setProperty("ItlwmAWDLSyncFailed", awdlSyncFailed, 32);
-        if (awdlHideInfra)
-            setProperty("ItlwmAWDLSyncInfraStripped", awdlSyncInfraStripped, 32);
     }
     return error;
 #else
@@ -1279,7 +1339,10 @@ void AirportItlwm::releaseAll()
 #ifndef AIRPORT_WCL
     OSSafeReleaseNULL(driverFaultReporter);
 #endif
+    // After detach (stop, failStart): drop the HAL's references to this controller, its work loop and
+    // gate, which otherwise kept the controller alive through the wrapper's HAL (audit P-R02).
     if (fHalService) {
+        fHalService->shutdown();
         fHalService->release();
         fHalService = NULL;
     }
@@ -1306,10 +1369,9 @@ void AirportItlwm::
 eventHandler(struct ieee80211com *ic, int msgCode, void *data)
 {
     AirportItlwm *that = OSDynamicCast(AirportItlwm, ic->ic_ac.ac_if.controller);
-#ifdef AIRPORT_WCL
+    // In every build: the non-WCL (Sonoma) body used that without a check (audit D04).
     if (!that)
         return;
-#endif
     IO80211SkywalkInterface *interface = that->fNetIf;
     if (!interface)
         return;
@@ -1359,7 +1421,8 @@ void AirportItlwm::fakeScanDone(OSObject *owner, IOTimerEventSource *sender)
     if (that->fNetIf)
         static_cast<AirportItlwmSkywalkInterface *>(that->fNetIf)->completeWCLScan();
 #else
-    that->fNetIf->postMessage(APPLE80211_M_SCAN_DONE, &msg, 4, 0);
+    if (that && that->fNetIf)
+        that->fNetIf->postMessage(APPLE80211_M_SCAN_DONE, &msg, 4, 0);
 #endif
 }
 
@@ -1379,8 +1442,6 @@ bool AirportItlwm::init(OSDictionary *properties)
     setProperty("ItlwmAWDLBuildCheck", itlAWDLBuildStatus());
     awdlRawSamples = PE_parse_boot_argn("-itlawdlsamples", &awdlBootValue, sizeof(awdlBootValue));
     awdlExtendFrames = PE_parse_boot_argn("-itlawdlelicit", &awdlBootValue, sizeof(awdlBootValue));
-    awdlHideInfra = PE_parse_boot_argn("-itlawdlhideinfra", &awdlBootValue, sizeof(awdlBootValue));
-    setProperty("ItlwmAWDLHideInfra", awdlHideInfra);
     awdlCreateRequests = 0;
     awdlManagementInputEnabled = false;
     awdlManagementActive = 0;
@@ -1406,9 +1467,10 @@ IOService* AirportItlwm::probe(IOService *provider, SInt32 *score)
     }
     pciNub = wrapper->pciNub;
     // The wrapper keeps its own reference; this one is ours, released in releaseAll or free.
-    if (fHalService != wrapper->fHalService) {
+    ItlHalService *hal = wrapper->halForStart();
+    if (fHalService != hal) {
         OSSafeReleaseNULL(fHalService);
-        fHalService = wrapper->fHalService;
+        fHalService = hal;
         if (fHalService)
             fHalService->retain();
     }
@@ -1580,6 +1642,31 @@ bool AirportItlwm::start(IOService *provider)
     return started;
 }
 
+// Undoes, in reverse order, what startDriver has done so far (audit P-A07). Before this, each failure
+// path undid its own subset: some never called releaseAll() (the CC log pipes and streams stayed), one
+// never called super::stop(), and every failure after the HAL attached skipped fHalService->detach(), so
+// the HAL kept its interrupt source, timers, task queue and firmware running while releaseAll() dropped
+// the controller's own references. The steps are the ones stop() uses; the HAL goes first, so nothing
+// interrupts or runs a task while the rest goes.
+bool AirportItlwm::failStart(IOService *provider, const StartProgress &progress)
+{
+    XYLog("start: undoing (super %d, HAL %d, interface %d/%d)\n", progress.superStarted, progress.halAttached,
+          progress.netIfAttached, progress.interfaceAttached);
+    if (progress.halAttached && fHalService)
+        fHalService->detach(pciNub);
+    if (fNetIf) {
+        if (progress.interfaceAttached)
+            detachInterface(fNetIf, true);
+        else if (progress.netIfAttached)
+            fNetIf->detach(this);
+        OSSafeReleaseNULL(fNetIf);
+    }
+    if (progress.superStarted)
+        super::stop(provider);
+    releaseAll();
+    return false;
+}
+
 bool AirportItlwm::startDriver(IOService *provider)
 {
     // Each kext is built for one macOS version, whose IO80211 class layouts it depends on.
@@ -1604,24 +1691,25 @@ bool AirportItlwm::startDriver(IOService *provider)
     XYLog("%s\n", __PRETTY_FUNCTION__);
     struct IOSkywalkEthernetInterface::RegistrationInfo registInfo;
     int boot_value = 0;
+    StartProgress progress {};
 
     UInt8 builtIn = 0;
-    setProperty("built-in", OSData::withBytes(&builtIn, sizeof(builtIn)));
+    if (OSData *builtInData = OSData::withBytes(&builtIn, sizeof(builtIn))) {   // released (audit P-A07)
+        setProperty("built-in", builtInData);
+        builtInData->release();
+    }
     setProperty("DriverKitDriver", kOSBooleanFalse);
 #ifdef AIRPORT_WCL
     if (!initCCLogs()) {
         XYLog("start: CCLog init fail\n");
-        releaseAll();
-        return false;
+        return failStart(provider, progress);
     }
 #endif
     if (!super::start(provider)) {
         XYLog("start: IO80211Controller::start fail\n");
-#ifdef AIRPORT_WCL
-        releaseAll();
-#endif
-        return false;
+        return failStart(provider, progress);
     }
+    progress.superStarted = true;
     pciNub->setBusMasterEnable(true);
     pciNub->setIOEnable(true);
     pciNub->setMemoryEnable(true);
@@ -1629,36 +1717,32 @@ bool AirportItlwm::startDriver(IOService *provider)
     if (pciNub->requestPowerDomainState(kIOPMPowerOn,
                                         (IOPowerConnection *) getParentEntry(gIOPowerPlane), IOPMLowestState) != IOPMNoErr) {
         XYLog("start: PCI power domain request fail\n");
-        super::stop(provider);
-        return false;
+        return failStart(provider, progress);
     }
     if (initPCIPowerManagment(pciNub) == false) {
         XYLog("start: PCI power management init fail\n");
-        super::stop(pciNub);
-        return false;
+        return failStart(provider, progress);
     }
     if (_fWorkloop == NULL) {
         XYLog("No _fWorkloop!!\n");
-        super::stop(pciNub);
-        releaseAll();
-        return false;
+        return failStart(provider, progress);
     }
     _fCommandGate = IOCommandGate::commandGate(this, (IOCommandGate::Action)AirportItlwm::tsleepHandler);
     if (_fCommandGate == 0) {
         XYLog("No command gate!!\n");
-        super::stop(pciNub);
-        releaseAll();
-        return false;
+        return failStart(provider, progress);
     }
     _fWorkloop->addEventSource(_fCommandGate);
     const IONetworkMedium *primaryMedium;
     if (!createMediumTables(&primaryMedium) ||
         !setCurrentMedium(primaryMedium) || !setSelectedMedium(primaryMedium)) {
         XYLog("setup medium fail\n");
-        releaseAll();
-        return false;
+        return failStart(provider, progress);
     }
-    fHalService->initWithController(this, _fWorkloop, _fCommandGate);
+    if (!fHalService->initWithController(this, _fWorkloop, _fCommandGate)) {
+        XYLog("start: HAL init fail\n");
+        return failStart(provider, progress);
+    }
     fHalService->get80211Controller()->ic_event_handler = eventHandler;
 
     if (PE_parse_boot_argn("-novht", &boot_value, sizeof(boot_value)))
@@ -1675,10 +1759,9 @@ bool AirportItlwm::startDriver(IOService *provider)
 
     if (!fHalService->attach(pciNub)) {
         XYLog("attach fail\n");
-        super::stop(pciNub);
-        releaseAll();
-        return false;
+        return failStart(provider, progress);
     }
+    progress.halAttached = true;
     // The watchdog runs on the main work loop, so its action holds the same gate as the interrupt
     // and request paths. On a separate loop it touched driver and 802.11 state (sc_tx_timer, state
     // changes, link quality) while those ran.
@@ -1687,26 +1770,18 @@ bool AirportItlwm::startDriver(IOService *provider)
         fWatchdogWorkLoop->retain();
     if (fWatchdogWorkLoop == NULL) {
         XYLog("init watchdog workloop fail\n");
-        fHalService->detach(pciNub);
-        super::stop(pciNub);
-        releaseAll();
-        return false;
+        return failStart(provider, progress);
     }
     watchdogTimer = IOTimerEventSource::timerEventSource(this, OSMemberFunctionCast(IOTimerEventSource::Action, this, &AirportItlwm::watchdogAction));
     if (!watchdogTimer) {
         XYLog("init watchdog fail\n");
-        fHalService->detach(pciNub);
-        super::stop(pciNub);
-        releaseAll();
-        return false;
+        return failStart(provider, progress);
     }
     fWatchdogWorkLoop->addEventSource(watchdogTimer);
     scanSource = IOTimerEventSource::timerEventSource(this, &fakeScanDone);
 #ifdef AIRPORT_WCL
     if (!scanSource || _fWorkloop->addEventSource(scanSource) != kIOReturnSuccess) {
-        super::stop(provider);
-        releaseAll();
-        return false;
+        return failStart(provider, progress);
     }
 #else
     _fWorkloop->addEventSource(scanSource);
@@ -1717,12 +1792,10 @@ bool AirportItlwm::startDriver(IOService *provider)
 #ifdef AIRPORT_WCL
     if (!fNetIf || !static_cast<AirportItlwmSkywalkInterface *>(fNetIf)->init(this)) {
 #else
-    if (!fNetIf->init(this)) {
+    if (!fNetIf || !fNetIf->init(this)) {
 #endif
         XYLog("Skywalk interface init fail\n");
-        super::stop(provider);
-        releaseAll();
-        return false;
+        return failStart(provider, progress);
     }
     fNetIf->setInterfaceRole(1);
     fNetIf->setInterfaceId(1);
@@ -1730,23 +1803,19 @@ bool AirportItlwm::startDriver(IOService *provider)
 #ifndef AIRPORT_WCL
     if (!initCCLogs()) {
         XYLog("CCLog init fail\n");
-        super::stop(provider);
-        releaseAll();
-        return false;
+        return failStart(provider, progress);
     }
 #endif
     if (!fNetIf->attach(this)) {
         XYLog("attach to service fail\n");
-        super::stop(provider);
-        releaseAll();
-        return false;
+        return failStart(provider, progress);
     }
+    progress.netIfAttached = true;
     if (!attachInterface(fNetIf, this)) {
         XYLog("attach to interface fail\n");
-        super::stop(provider);
-        releaseAll();
-        return false;
+        return failStart(provider, progress);
     }
+    progress.interfaceAttached = true;
     if (!IONetworkController::attachInterface((IONetworkInterface **)&bsdInterface,
 #ifdef AIRPORT_WCL
                                              false
@@ -1755,41 +1824,31 @@ bool AirportItlwm::startDriver(IOService *provider)
 #endif
                                              )) {
         XYLog("attach to IONetworkController interface fail\n");
-        super::stop(provider);
-        releaseAll();
-        return false;
+        return failStart(provider, progress);
     }
     memset(&registInfo, 0, sizeof(registInfo));
     if (!fNetIf->initRegistrationInfo(&registInfo, 1, sizeof(registInfo))) {
         XYLog("initRegistrationInfo fail\n");
-        super::stop(provider);
-        releaseAll();
-        return false;
+        return failStart(provider, progress);
     }
 #ifdef AIRPORT_WCL
     fNetIf->mExpansionData->fRegistrationInfo = (struct IOSkywalkNetworkInterface::RegistrationInfo *)IOMalloc(sizeof(struct IOSkywalkNetworkInterface::RegistrationInfo));
     fNetIf->mExpansionData2->fRegistrationInfo = (struct IOSkywalkEthernetInterface::RegistrationInfo *)IOMalloc(sizeof(struct IOSkywalkEthernetInterface::RegistrationInfo));
     if (!fNetIf->mExpansionData->fRegistrationInfo || !fNetIf->mExpansionData2->fRegistrationInfo) {
-        super::stop(provider);
-        releaseAll();
-        return false;
+        return failStart(provider, progress);
     }
     memcpy(fNetIf->mExpansionData->fRegistrationInfo, &registInfo, sizeof(registInfo));
     memcpy(fNetIf->mExpansionData2->fRegistrationInfo, &registInfo, sizeof(registInfo));
     if (fNetIf->getInterfaceRole() == 1)
         fNetIf->deferBSDAttach(true);
     if (!fNetIf->start(this)) {
-        super::stop(provider);
-        releaseAll();
-        return false;
+        return failStart(provider, progress);
     }
 
 #else
     if (!fNetIf->initRegistrationInfo(&registInfo, 1, sizeof(registInfo))) {
         XYLog("initRegistrationInfo fail\n");
-        super::stop(provider);
-        releaseAll();
-        return false;
+        return failStart(provider, progress);
     }
     fNetIf->mExpansionData->fRegistrationInfo = (struct IOSkywalkNetworkInterface::RegistrationInfo *)IOMalloc(sizeof(struct IOSkywalkNetworkInterface::RegistrationInfo));
     fNetIf->mExpansionData2->fRegistrationInfo = (struct IOSkywalkEthernetInterface::RegistrationInfo *)IOMalloc(sizeof(struct IOSkywalkEthernetInterface::RegistrationInfo));
@@ -1902,6 +1961,8 @@ IOReturn AirportItlwm::enable(IO80211SkywalkInterface *netif)
 {
     XYLog("%s\n", __PRETTY_FUNCTION__);
     super::enable(netif);
+    if (!_fCommandGate)         // audit D05
+        return kIOReturnNotReady;
     _fCommandGate->enable();
     if (power_state)
         enableAdapter(bsdInterface);
@@ -2147,29 +2208,24 @@ UInt32 AirportItlwm::outputPacket(mbuf_t m, void *param)
             freePacket(m);
         return kIOReturnOutputDropped;
     }
+    // Each bad packet returns here (audit D04): the old checks logged and carried on, so a null mbuf was
+    // dereferenced and a freed one enqueued. The EAPOL hex dump is gone too: it wrote the handshake,
+    // including the encrypted group key, to the log (and to ITLAWDLLog with -itllog, audit HL02).
     if (m == NULL) {
-        XYLog("%s m==NULL!!\n", __FUNCTION__);
-        ifp->netStat->outputErrors++;
-        ret = kIOReturnOutputDropped;
-    }
-    if (!(mbuf_flags(m) & MBUF_PKTHDR) ){
-        XYLog("%s pkthdr is NULL!!\n", __FUNCTION__);
-        ifp->netStat->outputErrors++;
-        freePacket(m);
-        ret = kIOReturnOutputDropped;
+        if (ifp->netStat)
+            ifp->netStat->outputErrors++;
+        return kIOReturnOutputDropped;
     }
     if (mbuf_type(m) == MBUF_TYPE_FREE) {
-        XYLog("%s mbuf is FREE!!\n", __FUNCTION__);
-        ifp->netStat->outputErrors++;
-        ret = kIOReturnOutputDropped;
+        if (ifp->netStat)
+            ifp->netStat->outputErrors++;
+        return kIOReturnOutputDropped;
     }
-    size_t len = mbuf_len(m);
-    ether_header_t *eh = (ether_header_t *)mbuf_data(m);
-    if (len >= sizeof(ether_header_t) && eh->ether_type == htons(ETHERTYPE_PAE)) { // EAPOL packet
-        const char* dump = hexdump((uint8_t*)mbuf_data(m), len);
-        XYLog("output EAPOL packet, len: %zu, data: %s\n", len, dump ? dump : "Failed to allocate memory");
-        if (dump)
-            IOFree((void*)dump, 3 * len + 1);
+    if (!(mbuf_flags(m) & MBUF_PKTHDR)) {
+        if (ifp->netStat)
+            ifp->netStat->outputErrors++;
+        freePacket(m);
+        return kIOReturnOutputDropped;
     }
     if (!ifp->if_snd.queue->lockEnqueue(m)) {
         freePacket(m);
@@ -2307,6 +2363,8 @@ IOReturn AirportItlwm::
 getCARD_CAPABILITIES(OSObject *object,
                                      struct apple80211_capability_data *cd)
 {
+    if (!cd || !fHalService)     // audit P-A07
+        return kIOReturnBadArgument;
     uint32_t caps = fHalService->get80211Controller()->ic_caps;
     memset(cd, 0, sizeof(struct apple80211_capability_data));
 
@@ -2435,9 +2493,14 @@ getHARDWARE_VERSION(OSObject *object,
 {
     if (!hv)
         return kIOReturnError;
+    if (!fHalService)
+        return kIOReturnNotReady;
     hv->version = APPLE80211_VERSION;
-    strncpy(hv->string, fHalService->getDriverInfo()->getFirmwareVersion(), sizeof(hv->string));
-    hv->string_len = strlen(fHalService->getDriverInfo()->getFirmwareVersion());
+    // Terminated, and the reported length never exceeds what was copied (audit P-A07).
+    const char *firmware = fHalService->getDriverInfo()->getFirmwareVersion();
+    memset(hv->string, 0, sizeof(hv->string));
+    strlcpy(hv->string, firmware ? firmware : "", sizeof(hv->string));
+    hv->string_len = (u_int16_t)strnlen(hv->string, sizeof(hv->string) - 1);
     return kIOReturnSuccess;
 }
 
@@ -2591,6 +2654,9 @@ SInt32 AirportItlwm::apple80211SkywalkRequest(UInt request,int cmd,IO80211Skywal
 
 IOReturn AirportItlwm::enableAdapter(IONetworkInterface *netif)
 {
+    // Reached from Apple's power requests; after a failed start or stop these are gone (audit D05).
+    if (!fHalService || !watchdogTimer)
+        return kIOReturnNotReady;
 #ifdef AIRPORT_WCL
     IOReturn status = fHalService->enable(netif);
     if (status != kIOReturnSuccess)
@@ -2605,9 +2671,12 @@ IOReturn AirportItlwm::enableAdapter(IONetworkInterface *netif)
 
 void AirportItlwm::disableAdapter(IONetworkInterface *netif)
 {
-    watchdogTimer->cancelTimeout();
-    watchdogTimer->disable();
-    fHalService->disable(netif);
+    if (watchdogTimer) {        // audit D05
+        watchdogTimer->cancelTimeout();
+        watchdogTimer->disable();
+    }
+    if (fHalService)
+        fHalService->disable(netif);
 }
 
 IOReturn AirportItlwm::

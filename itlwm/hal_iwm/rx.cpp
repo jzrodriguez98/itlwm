@@ -1006,6 +1006,10 @@ iwm_rx_pkt_valid(struct iwm_rx_packet *pkt)
             pkt->len_n_flags != htole32(IWM_FH_RSCSR_FRAME_INVALID));
 }
 
+// Whether a notification's payload holds a whole T. iwm_rx_pkt has already refused a record shorter
+// than its header, so the payload length can't wrap (audit HL05, the IWM half).
+#define IWM_NOTIF_FITS(pkt, T) (iwm_rx_packet_payload_len(pkt) >= sizeof(T))
+
 #define SYNC_RESP_STRUCT(_var_, _pkt_, t)                    \
 do {                                    \
 bus_dmamap_sync(sc->sc_dmat, data->map, sizeof(*(_pkt_)),    \
@@ -1056,7 +1060,8 @@ iwm_rx_pkt(struct iwm_softc *sc, struct iwm_rx_data *data, struct mbuf_list *ml)
         
         switch (code) {
             case IWM_REPLY_RX_PHY_CMD:
-                iwm_rx_rx_phy_cmd(sc, pkt, data);
+                if (IWM_NOTIF_FITS(pkt, struct iwm_rx_phy_info))
+                    iwm_rx_rx_phy_cmd(sc, pkt, data);
                 break;
                 
             case IWM_REPLY_RX_MPDU_CMD: {
@@ -1113,7 +1118,8 @@ iwm_rx_pkt(struct iwm_softc *sc, struct iwm_rx_data *data, struct mbuf_list *ml)
                 break;
                 
             case IWM_MISSED_BEACONS_NOTIFICATION:
-                iwm_rx_bmiss(sc, pkt, data);
+                if (IWM_NOTIF_FITS(pkt, struct iwm_missed_beacons_notif))
+                    iwm_rx_bmiss(sc, pkt, data);
                 break;
                 
             case IWM_MFUART_LOAD_NOTIFICATION:
@@ -1177,7 +1183,14 @@ iwm_rx_pkt(struct iwm_softc *sc, struct iwm_rx_data *data, struct mbuf_list *ml)
             case IWM_CALIB_RES_NOTIF_PHY_DB: {
                 struct iwm_calib_res_notif_phy_db *phy_db_notif;
                 SYNC_RESP_STRUCT(phy_db_notif, pkt, struct iwm_calib_res_notif_phy_db *);
-                iwm_phy_db_set_section(sc, phy_db_notif);
+                // The section is copied with the length the notification states: it must lie inside
+                // the payload, or the copy reads past the receive buffer. Init still completes, so a bad
+                // section can't hang the firmware start; that section is just missing.
+                if (IWM_NOTIF_FITS(pkt, struct iwm_calib_res_notif_phy_db) &&
+                    sizeof(*phy_db_notif) + le16toh(phy_db_notif->length) <= iwm_rx_packet_payload_len(pkt))
+                    iwm_phy_db_set_section(sc, phy_db_notif);
+                else
+                    XYLog("%s: PHY DB section longer than its notification, ignored\n", DEVNAME(sc));
                 sc->sc_init_complete |= IWM_CALIB_COMPLETE;
                 //                wakeupOn(&sc->sc_init_complete);
                 break;
@@ -1186,6 +1199,8 @@ iwm_rx_pkt(struct iwm_softc *sc, struct iwm_rx_data *data, struct mbuf_list *ml)
             case IWM_STATISTICS_NOTIFICATION: {
                 struct iwm_notif_statistics *stats;
                 SYNC_RESP_STRUCT(stats, pkt, struct iwm_notif_statistics *);
+                if (!IWM_NOTIF_FITS(pkt, struct iwm_notif_statistics))
+                    break;
                 memcpy(&sc->sc_stats, stats, sizeof(sc->sc_stats));
                 sc->sc_noise = iwm_get_noise(&stats->rx.general);
                 break;
@@ -1194,7 +1209,8 @@ iwm_rx_pkt(struct iwm_softc *sc, struct iwm_rx_data *data, struct mbuf_list *ml)
             case IWM_MCC_CHUB_UPDATE_CMD: {
                 struct iwm_mcc_chub_notif *notif;
                 SYNC_RESP_STRUCT(notif, pkt, struct iwm_mcc_chub_notif *);
-                iwm_mcc_update(sc, notif);
+                if (IWM_NOTIF_FITS(pkt, struct iwm_mcc_chub_notif))
+                    iwm_mcc_update(sc, notif);
                 break;
             }
                 
@@ -1209,9 +1225,10 @@ iwm_rx_pkt(struct iwm_softc *sc, struct iwm_rx_data *data, struct mbuf_list *ml)
                              IWM_CT_KILL_NOTIFICATION): {
                 struct iwm_ct_kill_notif *notif;
                 SYNC_RESP_STRUCT(notif, pkt, struct iwm_ct_kill_notif *);
+                // The device is stopped either way; only the temperature needs the whole notification.
                 XYLog("%s: device at critical temperature (%u degC), "
                        "stopping device\n",
-                       DEVNAME(sc), le16toh(notif->temperature));
+                       DEVNAME(sc), IWM_NOTIF_FITS(pkt, struct iwm_ct_kill_notif) ? le16toh(notif->temperature) : 0);
                 sc->sc_flags |= IWM_FLAG_HW_ERR;
                 task_add(systq, &sc->init_task);
                 break;
@@ -1309,6 +1326,8 @@ iwm_rx_pkt(struct iwm_softc *sc, struct iwm_rx_data *data, struct mbuf_list *ml)
             case IWM_REPLY_ERROR: {
                 struct iwm_error_resp *resp;
                 SYNC_RESP_STRUCT(resp, pkt, struct iwm_error_resp *);
+                if (!IWM_NOTIF_FITS(pkt, struct iwm_error_resp))
+                    break;
                 XYLog("%s: firmware error 0x%x, cmd 0x%x\n",
                       DEVNAME(sc), le32toh(resp->error_type),
                       resp->cmd_id);
@@ -1319,6 +1338,8 @@ iwm_rx_pkt(struct iwm_softc *sc, struct iwm_rx_data *data, struct mbuf_list *ml)
                 struct iwm_time_event_notif *notif;
                 uint32_t action;
                 SYNC_RESP_STRUCT(notif, pkt, struct iwm_time_event_notif *);
+                if (!IWM_NOTIF_FITS(pkt, struct iwm_time_event_notif))
+                    break;
                 
                 if (sc->sc_time_event_uid != le32toh(notif->unique_id))
                     break;

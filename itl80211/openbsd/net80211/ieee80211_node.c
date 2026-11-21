@@ -2251,6 +2251,16 @@ ieee80211_clean_nodes(struct ieee80211com *ic, int cache_timeout)
         ni->ni_scangen = gen;
         if (ni->ni_refcnt > 0)
             continue;
+        /*
+         * Room for a new scan result must not cost the BSS a join is waiting
+         * to find: where more BSSs are heard than the cache holds, the lowest
+         * addresses were evicted before the scan ended, and the join never
+         * reached AUTH (#69, runmain). Only this make-room sweep is affected.
+         */
+        if (!cache_timeout && ic->ic_opmode == IEEE80211_M_STA &&
+            (ic->ic_flags & IEEE80211_F_DESBSSID) &&
+            IEEE80211_ADDR_EQ(ni->ni_bssid, ic->ic_des_bssid))
+            continue;
 #ifndef IEEE80211_STA_ONLY
         if ((ic->ic_opmode == IEEE80211_M_HOSTAP ||
              ic->ic_opmode == IEEE80211_M_IBSS) &&

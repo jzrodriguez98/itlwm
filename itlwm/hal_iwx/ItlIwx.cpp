@@ -178,6 +178,21 @@ static inline unsigned awdlCoex80BlockFirst(unsigned ch)
     return 0;
 }
 static uint64_t awdlCoexLastMoveUS;
+// A move between two usable 5 GHz channels waits for a choice that held this long, and for this long
+// without AWDL data (#68). ITLAWDLCoexMovesSettleDropped counts choices that changed before they settled.
+static constexpr uint64_t kAwdlCoexMoveSettleUS = 60000000ULL, kAwdlCoexMoveQuietUS = 30000000ULL;
+static int awdlCoexSettleWant, awdlCoexSettleGen = -1;
+// The search on 6 for a device not heard yet (#35); -itlawdlnosearch6 turns it off. Wait 30 s after the listener is
+// added, then spend 15 s of every 60 s on 6 while no device's schedule is fresh.
+static constexpr uint64_t kAwdlCoexSearch6StartUS = 30000000ULL, kAwdlCoexSearch6CycleUS = 60000000ULL,
+    kAwdlCoexSearch6DwellUS = 15000000ULL;
+static bool awdlCoexNoSearch6, awdlCoexSearch6Active;
+static uint64_t awdlCoexAddedAtUS;
+static int awdlCoexSearch6Gen = -1;
+static uint32_t awdlCoexSearch6Dwells;
+static uint8_t awdlCoexSettleWidth;
+static uint64_t awdlCoexSettleSinceUS;
+static uint32_t awdlCoexMovesSettleDropped;
 // A move waits for the listener's ring to drain; nothing new is submitted meanwhile (iface129 review, 1).
 static bool awdlCoexMovePending;
 static bool awdlCoexData; // -itlawdlcoexdata
@@ -5655,6 +5670,8 @@ static bool awdlRx;
 static bool awdlQueueProbe;
 static bool awdlQueueProbeAttempted;
 bool itlLogOn;
+// Away cap for full scans while associated, from itlwm_scanout (0 = default 120 TU).
+uint32_t itlScanMaxOutTU;
 bool itlLogStartup;
 // Fixed slots, so writers on any thread only need an atomic index. IOLog from
 // this kext does not reach the unified log, and XYLog is kprintf only.
@@ -6035,6 +6052,10 @@ static bool awdlCoexSameBand;
 // (ITLAWDLCoexOverlap, for the channel picked last). -itlawdloverlap80 keeps the old choice, for comparison.
 static uint8_t awdlCoexOverlapState;
 static bool awdlCoexOverlap80;
+// Test (-itlawdlsta44, #68): while the station itself is on 44, the listener shares it instead of following
+// the peer's 149 slots. A peer on the same router names 44 in its Wi-Fi slots and 149 in some AWDL slots, and
+// the min rule then moved the listener between 44 and 149 every few seconds.
+static bool awdlCoexStation44;
 // Block Ack on the shared context (#16, #24): when the listener shares the station's binding (without
 // -itlawdlcoexmulti, or in its fallback), receive and send Block Ack run there as well. Until 0.5.3 they
 // ran only with the listener on its own context, so a shared listener answered no ADDBA request and sent
@@ -6058,6 +6079,14 @@ static uint32_t awdlCoexPeerSeqFrames, awdlCoexPeerSeqChanges;
 // other slots there (#35: 48 in slots 0, 1, 9 and 11 as well), so a channel that appears in those four slots is
 // the phone's Wi-Fi and doesn't count, unless wifiToo: then it counts if it also appears in another slot.
 // Based on PR #21's min rule (zheznanohana).
+// Whether the phone's sequence puts it on ch in any of its 16 slots, Wi-Fi slots included: it can be met there.
+static bool awdlCoexPeerVisits(const uint8_t seq[16], unsigned ch)
+{
+    for (unsigned n = 0; n < 16; ++n)
+        if (seq[n] == ch)
+            return true;
+    return false;
+}
 static bool awdlCoexPeerNames(const uint8_t seq[16], unsigned ch, bool wifiToo = false)
 {
     if (!wifiToo && (seq[6] == ch || seq[7] == ch || seq[14] == ch || seq[15] == ch))
@@ -6709,6 +6738,9 @@ static void awdlCoexPublish()
         root->setProperty("ITLAWDLCoexOwnWidth", uint32_t(awdlCoexOwnWidth), 32);
         root->setProperty("ITLAWDLCoexMoves", awdlCoexMoves, 32);
         root->setProperty("ITLAWDLCoexMoveFailures", awdlCoexMoveFailures, 32);
+        root->setProperty("ITLAWDLCoexMovesSettleDropped", awdlCoexMovesSettleDropped, 32);
+        root->setProperty("ITLAWDLCoexSearch6", awdlCoexSearch6Active);
+        root->setProperty("ITLAWDLCoexSearch6Dwells", awdlCoexSearch6Dwells, 32);
         root->setProperty("ITLAWDLCoexCountryNotices", awdlCoexCountryNotices, 32);
         root->setProperty("ITLAWDLCoexCountryAnswers", awdlCoexCountryAnswers, 32);
         root->setProperty("ITLAWDLCoexCountryLastStatus", awdlCoexCountryLastStatus, 32);
@@ -6716,6 +6748,7 @@ static void awdlCoexPublish()
         root->setProperty("ITLAWDLCoexBeaconHints", awdlCoexBeaconHints, 32);
         root->setProperty("ITLAWDLCoexOverlap", awdlCoexOverlapState, 8);
         root->setProperty("ITLAWDLCoexPeer5GHz", awdlCoexPeer5G, 32);
+        root->setProperty("ITLAWDLCoexStation44", awdlCoexStation44);
         root->setProperty("ITLAWDLCoexPeer5GHzFrames", awdlCoexPeer5GFrames, 32);
         root->setProperty("ITLAWDLCoexPeer5GHzChanges", awdlCoexPeer5GChanges, 32);
         root->setProperty("ITLAWDLCoexCountryFailures", awdlCoexCountryFailures, 32);
@@ -8268,7 +8301,10 @@ awdlCoexBaHandle(struct iwx_softc *sc)
         // nothing arrives (DataRxUcast frozen, SYNs unanswered) until the phone opens a session itself, which
         // took about two minutes on 2026-11-15. canProbe (and #47's same-channel window) still applies only to a
         // real receive session. -itlawdlfilterbysession keeps the old rule for an A/B.
-        const bool wantOff = (awdlCoexBaFilterBySession ? receiveSession : awdlCoexBaPeerAdded) &&
+        // Only with the listener on its own context (-itlawdlcoexmulti): shared with the station's (MultiState
+        // off), the station-lifetime rule stopped Mac → iPhone sends, and the session rule fixed it (#63).
+        const bool sessionRule = awdlCoexBaFilterBySession || !awdlCoexMultiActive;
+        const bool wantOff = (sessionRule ? receiveSession : awdlCoexBaPeerAdded) &&
             answerNow >= awdlCoexBaProbeUntilUS;
         if (wantOff != awdlCoexBaFilterOff) {
             awdlCoexBaFilter.off = wantOff;
@@ -13258,7 +13294,7 @@ iwx_umac_scan(struct iwx_softc *sc, int bgscan)
     int err, async = bgscan;
 #ifdef AIRPORT_WCL
     const auto timing = AirportWCL::scanTiming(ic->ic_wcl_scan_away_time_ms, bgscan,
-        isset(sc->sc_ucode_api, IWX_UCODE_TLV_API_FRAGMENTED_SCAN));
+        isset(sc->sc_ucode_api, IWX_UCODE_TLV_API_FRAGMENTED_SCAN), itlScanMaxOutTU);
     const uint32_t timeout = htole32(timing.suspendTU);
     const uint32_t maxOut = htole32(timing.maxOutTU);
 #else
@@ -13458,7 +13494,7 @@ iwx_umac_scan_v12(struct iwx_softc *sc, int bgscan)
     uint16_t gen_flags = 0;
 #ifdef AIRPORT_WCL
     const auto timing = AirportWCL::scanTiming(ic->ic_wcl_scan_away_time_ms, bgscan,
-        isset(sc->sc_ucode_api, IWX_UCODE_TLV_API_FRAGMENTED_SCAN));
+        isset(sc->sc_ucode_api, IWX_UCODE_TLV_API_FRAGMENTED_SCAN), itlScanMaxOutTU);
     const uint32_t timeout = htole32(timing.suspendTU);
     const uint32_t maxOut = htole32(timing.maxOutTU);
 #else
@@ -13588,7 +13624,7 @@ iwx_umac_scan_v14(struct iwx_softc *sc, int bgscan)
     struct iwx_scan_channel_params_v6 *cp;
 #ifdef AIRPORT_WCL
     const auto timing = AirportWCL::scanTiming(ic->ic_wcl_scan_away_time_ms, bgscan,
-        isset(sc->sc_ucode_api, IWX_UCODE_TLV_API_FRAGMENTED_SCAN));
+        isset(sc->sc_ucode_api, IWX_UCODE_TLV_API_FRAGMENTED_SCAN), itlScanMaxOutTU);
     const uint32_t timeout = htole32(timing.suspendTU);
     const uint32_t maxOut = htole32(timing.maxOutTU);
 #else
@@ -15434,15 +15470,20 @@ awdlCoexMacSend(struct iwx_softc *sc, uint32_t action)
 // (no passive, no radar, ad hoc allowed; at 80 MHz on the whole block). Then 6 at 20 MHz. The station's own
 // 80 MHz block with another primary makes it 20 MHz; a 160 MHz station channel over it skips it (#26). 80 MHz is
 // not tried again in a generation where its PHY command failed.
+// Whether the firmware's channel map lets the listener use ch at all (any width).
+static bool
+awdlCoexChannelUsable(struct ieee80211com *ic, unsigned ch)
+{
+    const auto &c = ic->ic_channels[ch];
+    return c.ic_freq && isset(ic->ic_chan_active, ch) && !awdlCoexNoIr(ic, ch) &&
+        !(c.ic_flags & (IEEE80211_CHAN_DFS | IEEE80211_CHAN_NOADHOC));
+}
+
 static int
 awdlCoexPickOwn(struct iwx_softc *sc, uint8_t *width)
 {
     struct ieee80211com *ic = &sc->sc_ic;
-    auto usable = [ic](unsigned ch) {
-        const auto &c = ic->ic_channels[ch];
-        return c.ic_freq && isset(ic->ic_chan_active, ch) && !awdlCoexNoIr(ic, ch) &&
-            !(c.ic_flags & (IEEE80211_CHAN_DFS | IEEE80211_CHAN_NOADHOC));
-    };
+    auto usable = [ic](unsigned ch) { return awdlCoexChannelUsable(ic, ch); };
     uint32_t hints = isset(ic->ic_beacon_hint, 6) ? 16U : 0U;
     for (unsigned ch = 149, bit = 1; ch <= 161; ch += 4, bit <<= 1)
         if (isset(ic->ic_beacon_hint, ch))
@@ -15509,11 +15550,37 @@ awdlCoexPickOwn(struct iwx_softc *sc, uint8_t *width)
     // The min rule (PR #21): what the phone's AWDL slots name, while it was heard in the last 10 minutes.
     const bool peerFresh = awdlCoexPeer5G && awdlUptimeUS() - awdlCoexPeer5GUS < kAwdlCoexPeer5GLifeUS;
     const unsigned peerCh = peerFresh ? awdlCoexPeerChannel(awdlCoexPeerSeq) : 0U;
-    const bool names44 = peerCh == 44;
+    // On merge: only while the peer itself is seen on 44, in any slot (its Wi-Fi slots count here), so the
+    // flag never keeps the listener on 44 for a peer that never comes there.
+    const bool stationOn44 = awdlCoexStation44 && peerFresh && awdlCoexPeerVisits(awdlCoexPeerSeq, 44) &&
+        ic->ic_state == IEEE80211_S_RUN && ic->ic_bss && ic->ic_bss->ni_chan &&
+        ieee80211_chan2ieee(ic, ic->ic_bss->ni_chan) == 44;
+    const bool names44 = peerCh == 44 || stationOn44;
     const bool names149 = peerFresh && awdlCoexPeerNames(awdlCoexPeerSeq, 149);
     int pick = 0;
     uint8_t w = IWX_PHY_VHT_CHANNEL_MODE20;
-    if (names44 && tryChannel(44, true, &w))
+    // Search on 6 (#35): with no device's schedule heard, a listener on 149 never hears a phone that uses only
+    // 44 (Russia, Germany), so it never follows it there. Every device spends a slot on 6, so for a while in each
+    // cycle the listener waits there; once a schedule is heard, the rules below take over at once (moves from 6
+    // aren't held). Not while a schedule is fresh, and not in the first kAwdlCoexSearch6StartUS.
+    const uint64_t searchNowUS = awdlUptimeUS();
+    if (awdlCoexSearch6Gen != awdlCoexGeneration) {   // a new listener: its search clock starts now
+        awdlCoexSearch6Gen = awdlCoexGeneration;
+        awdlCoexAddedAtUS = searchNowUS;
+    }
+    const bool search6 = !awdlCoexNoSearch6 && !peerFresh && awdlCoexAddedAtUS &&
+        searchNowUS - awdlCoexAddedAtUS >= kAwdlCoexSearch6StartUS && usable(6) &&
+        (searchNowUS - awdlCoexAddedAtUS - kAwdlCoexSearch6StartUS) % kAwdlCoexSearch6CycleUS < kAwdlCoexSearch6DwellUS;
+    if (search6 != awdlCoexSearch6Active) {
+        awdlCoexSearch6Active = search6;
+        if (search6)
+            ++awdlCoexSearch6Dwells;
+        awdlCoexPublish();
+    }
+    if (search6) {
+        w = IWX_PHY_VHT_CHANNEL_MODE20;
+        pick = 6;
+    } else if (names44 && tryChannel(44, true, &w))
         pick = 44;
     // 149 as before, unless the phone uses only 44: then it never comes to 149 (#35), and 6 is better.
     else if ((names149 || !names44) && tryChannel(149, names149, &w))
@@ -15613,11 +15680,43 @@ awdlCoexRetarget(struct iwx_softc *sc)
     const int have = own->channel ? ieee80211_chan2ieee(ic, own->channel) : 0;
     const int haveWidth = awdlCoexOwnWidth;
     // Same channel and the same width: nothing to do. 20 MHz and 80 MHz on one channel are different choices.
+    const uint64_t now = awdlUptimeUS();
     if (!want || (want == have && (width == IWX_PHY_VHT_CHANNEL_MODE80) == (haveWidth == 80))) {
+        if (awdlCoexSettleWant) {
+            ++awdlCoexMovesSettleDropped;
+            awdlCoexSettleWant = 0;
+        }
         awdlCoexMovePending = false;
         return;
     }
-    const uint64_t now = awdlUptimeUS();
+    // From one usable 5 GHz channel to another (44 and 149), only on a choice that held for
+    // kAwdlCoexMoveSettleUS and not within kAwdlCoexMoveQuietUS of AWDL data (#68). The choice follows the
+    // last channel sequence heard from any nearby device, which can alternate every few seconds, and each
+    // move also drops the block-ack peer, so a transfer was cut off by the next one. A channel the map
+    // withdrew, and moves to or from 6, aren't held.
+    // Not held when the peer never comes to the channel the listener is on (no slot names it, its Wi-Fi slots
+    // included) and does come to the new one: staying helps nobody (a 44-only phone heard while on 149, #35).
+    const bool peerSeqFresh = awdlCoexPeer5G && now - awdlCoexPeer5GUS < kAwdlCoexPeer5GLifeUS;
+    const bool haveUnvisited = peerSeqFresh && have > 0 && have <= 255 &&
+        !awdlCoexPeerVisits(awdlCoexPeerSeq, unsigned(have)) && awdlCoexPeerVisits(awdlCoexPeerSeq, unsigned(want));
+    if (haveUnvisited && awdlCoexSettleWant)
+        awdlCoexSettleWant = 0;
+    if (!haveUnvisited && !awdlCoexMovePending && want != 6 && have && have != 6 &&
+        awdlCoexChannelUsable(ic, unsigned(have))) {
+        // A choice from an earlier listener (another generation) starts over.
+        if (want != awdlCoexSettleWant || width != awdlCoexSettleWidth || awdlCoexSettleGen != gen) {
+            if (awdlCoexSettleWant)
+                ++awdlCoexMovesSettleDropped;
+            awdlCoexSettleWant = want;
+            awdlCoexSettleWidth = width;
+            awdlCoexSettleSinceUS = now;
+            awdlCoexSettleGen = gen;
+        }
+        const bool dataRecent = awdlCoexLastDataUS && now - awdlCoexLastDataUS < kAwdlCoexMoveQuietUS;
+        if (dataRecent || now - awdlCoexSettleSinceUS < kAwdlCoexMoveSettleUS)
+            return;
+    }
+    awdlCoexSettleWant = 0;
     // Up to 5 GHz (149 or 44) at most every 10 s; back to 6 at once.
     if (want != 6 && awdlCoexLastMoveUS && now - awdlCoexLastMoveUS < 10000000ULL) {
         awdlCoexMovePending = false;
@@ -20697,6 +20796,8 @@ iwx_attach(struct iwx_softc *sc, struct pci_attach_args *pa)
             awdlBtCoexRequest = requestedCoexBt;
         awdlCoexSameBand = PE_parse_boot_argn("-itlawdlsameband", &dummy, sizeof(dummy));
         awdlCoexOverlap80 = PE_parse_boot_argn("-itlawdloverlap80", &dummy, sizeof(dummy));
+        awdlCoexNoSearch6 = PE_parse_boot_argn("-itlawdlnosearch6", &dummy, sizeof(dummy));
+        awdlCoexStation44 = PE_parse_boot_argn("-itlawdlsta44", &dummy, sizeof(dummy));
         awdlCoexNoSharedBa = PE_parse_boot_argn("-itlawdlnosharedba", &dummy, sizeof(dummy));
         awdlCoexMultiState = awdlCoexMulti ? "not-added" : "off";
         if (awdlCoexTx) {

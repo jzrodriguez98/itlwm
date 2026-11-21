@@ -737,6 +737,29 @@ int32_t linkQualityForRSSI(int32_t rssi)
 // On Sequoia only en0's link quality metric is reported: IO80211Family 24H241 has the same empty
 // setLQM stub and no other caller of reportLinkQuality, so the same "off" rating is expected. The
 // RSSI-only LqmUpdate below uses Tahoe's WCL structure layout and stays Tahoe-only.
+// itlwm_lqmint=N (seconds, 1..60): post LqmUpdate only when the RSSI moved by 3 dB or more, or N
+// seconds passed since the last one. Each LqmUpdate makes WCL announce RSSI_CHANGED, and with the 2 s
+// timer plus every 8th beacon that was ~1.7 events a second, each followed by client queries to
+// airportd. Apple's drivers report on change. Unset: every update is posted, as before.
+uint32_t itlLqmMinIntervalSec;
+
+bool AirportItlwmSkywalkInterface::wclLqmPostAllowed(int32_t rssi)
+{
+    if (!itlLqmMinIntervalSec)
+        return true;
+    uint64_t now;
+    absolutetime_to_nanoseconds(mach_absolute_time(), &now);
+    const int32_t delta = rssi > wclLqmLastPostRssi ? rssi - wclLqmLastPostRssi : wclLqmLastPostRssi - rssi;
+    if (wclLqmLastPostNs && delta < 3 && now - wclLqmLastPostNs < uint64_t(itlLqmMinIntervalSec) * 1000000000ULL) {
+        if (!(++wclLqmSuppressed % 64) && instance)
+            instance->setProperty("ItlwmWCLLqmSuppressed", wclLqmSuppressed, 32);
+        return false;
+    }
+    wclLqmLastPostNs = now;
+    wclLqmLastPostRssi = rssi;
+    return true;
+}
+
 void AirportItlwmSkywalkInterface::wclPostLinkQuality()
 {
     if (wclStopping || !portAuthorized || !instance)
@@ -758,6 +781,8 @@ void AirportItlwmSkywalkInterface::wclPostLinkQuality()
     AirportWCL::LqmBeaconUpdate update = {};
     update.rssiValid = 1;
     update.rssi = rssi.aggregate_rssi;
+    if (!wclLqmPostAllowed(rssi.aggregate_rssi))
+        return;
     instance->postMessage(this, AirportWCL::LqmUpdate, &update, sizeof(update), true);
     if (++wclLqmPeriodicPosts == 1 || !(wclLqmPeriodicPosts % 30)) {
         instance->setProperty("ItlwmWCLLqmPeriodicPosts", wclLqmPeriodicPosts, 32);
@@ -772,6 +797,8 @@ void AirportItlwmSkywalkInterface::handleWCLLink(bool up)
     if (wclStopping)
         return;
     portAuthorized = up;
+    // itlwm_lqmint: a new link (or none) starts over, so the first update after a join is never held back.
+    wclLqmLastPostNs = 0;
     if (!up)
         AirportWCL::resetLinkQuality(wclLinkQualityReported, [this](int32_t quality) {
             itlReportLinkQuality(static_cast<IOSkywalkNetworkInterface *>(this), uint32_t(quality));
@@ -875,7 +902,7 @@ void AirportItlwmSkywalkInterface::handleWCLEvent(int code, void *data)
                 if (portAuthorized && (wclLqmBeacons % 8 == 0)) {
 #if __IO80211_TARGET == __MAC_15_2
                     apple80211_rssi_data rssi = {};
-                    if (getRSSI(&rssi) == kIOReturnSuccess) {
+                    if (getRSSI(&rssi) == kIOReturnSuccess && wclLqmPostAllowed(rssi.aggregate_rssi)) {
                         AirportWCL::SequoiaLqmUpdate update = {};
                         update.rssiValid = 1;
                         update.rssi = rssi.aggregate_rssi;
@@ -884,7 +911,10 @@ void AirportItlwmSkywalkInterface::handleWCLEvent(int code, void *data)
                     }
 #else
                     AirportWCL::LqmBeaconUpdate update;
-                    if (AirportWCL::makeBeaconUpdate(
+                    apple80211_rssi_data gateRssi = {};
+                    const bool gateHasRssi = getRSSI(&gateRssi) == kIOReturnSuccess && gateRssi.aggregate_rssi < 0;
+                    if ((!gateHasRssi || wclLqmPostAllowed(gateRssi.aggregate_rssi)) &&
+                        AirportWCL::makeBeaconUpdate(
                             wclLqmBeacons - wclLqmReportedBeacons, update)) {
                         apple80211_rssi_data rssi = {};
                         if (getRSSI(&rssi) == kIOReturnSuccess && rssi.aggregate_rssi < 0) {

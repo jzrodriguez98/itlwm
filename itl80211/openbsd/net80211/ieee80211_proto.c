@@ -1424,6 +1424,23 @@ ieee80211_check_wpa_supplicant_failure(struct ieee80211com *ic,
 		ni2->ni_assoc_fail |= ic->ic_bss->ni_assoc_fail;
 }
 
+#ifdef AIRPORT_WCL
+/*
+ * Whether entering RUN raises the link at once. A personal network waits for
+ * the driver's own handshake to make the port valid. An 802.1X network can't:
+ * macOS's supplicant authenticates first, and the BSD interface's output
+ * thread, which carries its EAP frames, runs only while the link is up (#69,
+ * runmain). ieee80211_encap still holds back everything but EAPOL until the
+ * port is valid.
+ */
+static int
+ieee80211_wcl_run_raises_link(struct ieee80211com *ic, struct ieee80211_node *ni)
+{
+	return !(ic->ic_flags & IEEE80211_F_RSNON) || ni->ni_port_valid ||
+	    ic->ic_wcl_enterprise;
+}
+#endif
+
 int
 ieee80211_newstate(struct ieee80211com *ic, enum ieee80211_state nstate,
     int mgt)
@@ -1706,7 +1723,7 @@ justcleanup:
                     " HE enabled" : "");
 			}
 #if defined(AIRPORT_WCL)
-            if (!(ic->ic_flags & IEEE80211_F_RSNON) || ni->ni_port_valid) {
+            if (ieee80211_wcl_run_raises_link(ic, ni)) {
 #elif defined(USE_APPLE_SUPPLICANT)
             {
 #elif (defined IO80211FAMILY_V2)

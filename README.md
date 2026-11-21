@@ -6,7 +6,7 @@
 
 **AirDrop for Intel Wi-Fi cards on macOS.** ForbiddenItlwm is a fork of AirportItlwm that adds AWDL, the peer-to-peer Wi-Fi link AirDrop runs on. Apple's own Wi-Fi stack does the rest. Normal Wi-Fi stays connected while AirDrop works.
 
-> **Public beta. Newest release: [0.6.0-beta.1](https://github.com/retropineaple/ForbiddenItlwm/releases/tag/v0.6.0-beta.1).** Works on macOS Tahoe 26.7.x and Sequoia 15.8.x, with a Sonoma 14.8.9 test build. Each macOS version has its own kexts. Fixes come out often: before reporting a problem, update to the newest release (**Watch → Custom → Releases** to be notified).
+> **Public beta. Newest release: [0.6.0-beta.3](https://github.com/retropineaple/ForbiddenItlwm/releases/tag/v0.6.0-beta.3).** Works on macOS Tahoe 26.7.x and Sequoia 15.8.x, with a Sonoma 14.8.9 test build. Each macOS version has its own kexts. Fixes come out often: before reporting a problem, update to the newest release (**Watch → Custom → Releases** to be notified).
 
 ## ⚠️ Read this first
 
@@ -41,11 +41,11 @@ Users also report **AirPlay** working over this driver, from an iPad to the hack
 | --- | --- | --- |
 | Tahoe | 26.7.1, 26.7.2, 26.7.3 | Works (tested on 26.7.1, users on 26.7.2 and 26.7.3) |
 | Sequoia | 15.8, 15.8.1, 15.8.2, 15.8.3 | Works from 0.5.1-test1 (users on 15.8.1 to 15.8.3) |
-| Sonoma | 14.8.9 | Test build. First hardware report ([#55](https://github.com/retropineaple/ForbiddenItlwm/issues/55), AX210): Wi-Fi and the listener start, but macOS doesn't ask for `awdl0` yet, so AirDrop doesn't work |
+| Sonoma | 14.8.9 | Test build. From 0.6.0-beta.3 macOS creates `awdl0`, and one user reports AirDrop working both ways on an AX200 at 5–7 MB/s ([PR #77](https://github.com/retropineaple/ForbiddenItlwm/pull/77), [#55](https://github.com/retropineaple/ForbiddenItlwm/issues/55)). Not tested here |
 
 On any other build the driver keeps AirDrop off and works as plain Wi-Fi. [docs/TESTED-HARDWARE.md](docs/TESTED-HARDWARE.md) has every build and report.
 
-**Cards:** Intel Wi-Fi 6 and 6E cards. The project tests the AX211; users report the AX201, AX210, AX200 and an AX1690i working. Older 7000, 8000 and 9000-series cards (such as the 9560, 9462 and 9260) run on a part of the driver without AirDrop code, so they get normal Wi-Fi only.
+**Cards:** Intel Wi-Fi 6 and 6E cards. The project tests the AX211; users report the AX201, AX210, AX200 and an AX1690i working. Older 7000, 8000 and 9000-series cards (such as the 9260, and the 9560 on 8th and 9th-gen Intel boards) run on a part of the driver without AirDrop code, so they get normal Wi-Fi only. The 9560, 9461 and 9462 on 10th-gen (Ice Lake, Comet Lake) and newer boards run on the newer part, which has the AirDrop code; one is being tested ([#87](https://github.com/retropineaple/ForbiddenItlwm/issues/87)). `check_compat.sh` tells which part your card uses.
 
 **No OCLP Wi-Fi patches.** ForbiddenItlwm needs macOS's own Wi-Fi stack. If you used OpenCore Legacy Patcher's "Modern Wireless" root patch for an older AirportItlwm, revert it, and also remove what it added to `config.plist` (see [INSTALL](docs/INSTALL.md#before-you-start)). Left in place, they stop Wi-Fi from starting.
 
@@ -67,7 +67,7 @@ The checker shows your country and whether channels 149 and 44 are open; [TROUBL
 
 ## Install
 
-See **[docs/INSTALL.md](docs/INSTALL.md)**. In short: on a USB stick with a copy of your EFI, install the matching `AirportItlwm.kext` and `BTLEAdvFixup.kext` for your macOS, add the [boot flags](docs/BOOT-FLAGS.md), and boot from the stick. Load only one `AirportItlwm.kext` instance.
+See **[docs/INSTALL.md](docs/INSTALL.md)**. In short: on a USB stick with a copy of your EFI, install the `AirportItlwm.kext` built for your macOS, add `BTLEAdvFixup.kext`, add the [boot flags](docs/BOOT-FLAGS.md), and boot from the stick. Don't load this AirportItlwm build alongside another AirportItlwm build.
 
 ## After installing: what to test
 
@@ -89,14 +89,16 @@ Please report what you find, working or not, in a [GitHub issue](https://github.
 - **Mac → iPhone can still be slower than iPhone → Mac** on some setups ([#24](https://github.com/retropineaple/ForbiddenItlwm/issues/24), [#63](https://github.com/retropineaple/ForbiddenItlwm/issues/63)). 0.6.0's same-channel fix ([PR #47](https://github.com/retropineaple/ForbiddenItlwm/pull/47)) solved the main case (#22).
 - **Connects can be slow,** mostly iPhone → Mac.
 - **Normal Wi-Fi loses some speed while AirDrop's listener runs** (they share the radio).
-- **A long list of boot flags,** sleep untested on the project's hackintosh (one user reports two nights without problems, [#38](https://github.com/retropineaple/ForbiddenItlwm/issues/38)), tested with iPhones (users report iPads working; AirDrop with a Mac as the other device isn't confirmed yet, [#33](https://github.com/retropineaple/ForbiddenItlwm/issues/33)).
+- **A long list of boot flags,** sleep untested on the project's hackintosh (one user reports four of five nights fine, [#38](https://github.com/retropineaple/ForbiddenItlwm/issues/38)), tested with iPhones (users report iPads working, and AirDrop with a Mac as the other device, [#33](https://github.com/retropineaple/ForbiddenItlwm/issues/33), [#81](https://github.com/retropineaple/ForbiddenItlwm/issues/81)).
 - **Not working yet:**
   - **Instant Hotspot,** joining the iPhone's hotspot from the Wi-Fi menu: its Bluetooth connection to the iPhone times out ([#39](https://github.com/retropineaple/ForbiddenItlwm/issues/39), [#40](https://github.com/retropineaple/ForbiddenItlwm/issues/40)). Join the hotspot as a normal network, with its password, instead.
   - **Sidecar and Universal Control over Wi-Fi:** the driver doesn't support the traffic registration they need ([#42](https://github.com/retropineaple/ForbiddenItlwm/issues/42)). Sidecar over USB works.
   - **Internet Sharing over Wi-Fi:** the card can't act as an access point ([#28](https://github.com/retropineaple/ForbiddenItlwm/issues/28)). Sharing over Bluetooth or USB works.
+- **One Apple device at a time for fast transfers.** The driver keeps block ack with one device, as long as that device has exchanged data in the last ten minutes. A second Apple device nearby (another Mac, an iPad) can then keep an iPhone waiting ([#81](https://github.com/retropineaple/ForbiddenItlwm/issues/81)). See TROUBLESHOOTING.
+- **Wi-Fi 6 (`itlwm_he=1`) can drop Wi-Fi when AirDrop starts** on some cards ([#83](https://github.com/retropineaple/ForbiddenItlwm/issues/83)). Keep it off if you use AirDrop.
 - **AirDrop needs the Mac to be connected to a Wi-Fi network.** The AirDrop listener runs beside your Wi-Fi connection: with Wi-Fi on but no network joined, transfers stay on "Waiting". A real Mac doesn't need a network for this.
 - **WPA3:** on a WPA2/WPA3 transition network the Mac joins with WPA2 and without protected management frames, as AirportItlwm does. WPA3-only networks can't be joined.
-- **The Sonoma kext's Wi-Fi code** takes paths of its own (join, scan, keys, teardown) that the Tahoe and Sequoia kexts don't use. They had their first security review for 0.6.0; it hasn't been tested on hardware yet.
+- **The Sonoma kext's Wi-Fi code** takes paths of its own (join, scan, keys, teardown) that the Tahoe and Sequoia kexts don't use. They had their first security review for 0.6.0; one user runs it on 14.8.9 (#77), and it hasn't been tested here.
 
 What's planned: [ROADMAP](docs/ROADMAP.md).
 

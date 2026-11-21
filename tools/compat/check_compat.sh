@@ -2,7 +2,7 @@
 # AirDrop on Intel Wi-Fi: compatibility check for testers.
 #
 # Read-only. It changes nothing, needs no sudo and sends nothing anywhere. It reads the macOS build,
-# the Intel Wi-Fi and Bluetooth hardware IDs, which kexts are loaded and, if ForbiddenItlwm
+# the Intel Wi-Fi and Bluetooth hardware IDs, which kexts are loaded and, if AirportItlwm
 # is already running, a few of its status keys. Then it says how likely the driver is
 # to work on this machine, based on the support table in tools/compat/README.md (2026-11-10 study).
 #
@@ -52,7 +52,7 @@ if [ "$ARCH" != "x86_64" ]; then
     BLOCKERS=$((BLOCKERS + 1))
 fi
 OS_MAJOR=${OS_VER%%.*}
-# Builds the driver allows AirDrop on (ForbiddenItlwm/AWDLBuildGuard.cpp): 25G241 tested on
+# Builds the driver allows AirDrop on (AirportItlwm/AWDLBuildGuard.cpp): 25G241 tested on
 # hardware, 25G332 and 25G342 verified offline from Apple's Kernel Debug Kits.
 OFFLINE_BUILDS="25G332 25G342"
 if [ "$OS_BUILD" = "$TESTED_BUILD" ]; then
@@ -61,12 +61,12 @@ elif [ -n "$OS_BUILD" ] && echo " $OFFLINE_BUILDS " | grep -q " $OS_BUILD "; the
     pass "macOS $OS_VER ($OS_BUILD): supported. Its Wi-Fi stack was checked against $TESTED_BUILD and is the same where"
     pass "the driver depends on it. See the bluetoothd pattern check below for the Bluetooth side. Please report your result."
 elif [ "${OS_MAJOR:-0}" = "15" ]; then
-    # The Sequoia kexts (ForbiddenItlwm and BTLEAdvFixup for Sequoia), not the Tahoe ones.
+    # The Sequoia kexts (AirportItlwm and BTLEAdvFixup for Sequoia), not the Tahoe ones.
     SEQ_VERIFIED="24H23 24H32 24H232 24H241"   # 24H32 (15.8.1) and 24H232 (15.8.2) run verified kernels
     OS_MINOR=$(echo "$OS_VER" | cut -d. -f2)
     if echo " $SEQ_VERIFIED " | grep -q " $OS_BUILD "; then
         pass "macOS $OS_VER ($OS_BUILD): supported by the Sequoia kexts. Users report AirDrop working on 15.8.1 to 15.8.3"
-        pass "with 0.5.1-test1 or later. Use the Sequoia ForbiddenItlwm and BTLEAdvFixup."
+        pass "with 0.5.1-test1 or later. Use the Sequoia AirportItlwm and BTLEAdvFixup."
     elif [ "${OS_MINOR:-0}" = "8" ]; then
         warn "macOS $OS_VER ($OS_BUILD): expected to work with the Sequoia kexts (same 15.8 kernel family), but this build"
         warn "wasn't checked offline. The driver still checks Apple's Wi-Fi tables at boot. Please report your result."
@@ -78,7 +78,7 @@ elif [ "${OS_MAJOR:-0}" = "14" ]; then
     # The Sonoma kexts (in development): only 14.8.9 was checked offline.
     if [ "$OS_BUILD" = "23J631" ]; then
         pass "macOS $OS_VER ($OS_BUILD): supported by the Sonoma kexts. Their Wi-Fi stack was checked offline, but Sonoma"
-        pass "isn't confirmed working on hardware yet, so please report your result. Use the Sonoma ForbiddenItlwm and BTLEAdvFixup."
+        pass "isn't confirmed working on hardware yet, so please report your result. Use the Sonoma AirportItlwm and BTLEAdvFixup."
     else
         warn "macOS $OS_VER ($OS_BUILD): only Sonoma 14.8.9 (23J631) is checked. On this build the Sonoma kext keeps AirDrop off"
         warn "(normal Wi-Fi may still work). Updating to 14.8.9 is the way to get AirDrop on Sonoma."
@@ -180,11 +180,11 @@ else
         case "$FAMILY" in
             ax200)  CARD_TIER=reported; pass "AX200 (by device ID). Users report AirDrop working on Sequoia 15.6.";;
             qu)     CARD_TIER=likely; warn "Ice/Comet/Tiger Lake CNVi card (AX201, AX101 or 9560/9461/9462 class). Users report the AX201 working; the others are untested."
-                    info "Load the AirDrop-enabled AirportItlwm build and run this again to tell which radio it is.";;
+                    info "Load AirportItlwm (or AirportItlwm) and run this again to tell which radio it is.";;
             qnj)    CARD_TIER=unsupported; fail "Discrete 22000 card whose firmware (QuQnj) isn't bundled.";;
             ax210-family-discrete) CARD_TIER=reported; pass "AX210 (by device ID). Users report AirDrop working (Tahoe 26.7.2 and 26.7.3, Sequoia 15.8.1).";;
             so-cnvi) CARD_TIER=likely; warn "Alder Lake or newer CNVi slot. It could hold an AX211 (tested), AX201/AX203 or 9560-class radio."
-                     info "Load the AirDrop-enabled AirportItlwm build and run this again to tell which radio it is.";;
+                     info "Load AirportItlwm (or AirportItlwm) and run this again to tell which radio it is.";;
             snj)    CARD_TIER=unsupported; fail "Device 0x2726 needs SoSnj firmware, which isn't bundled.";;
             ma)     CARD_TIER=unsupported; fail "Meteor Lake class CNVi (0x$WIFI_DEV) needs 'ma' firmware, which isn't bundled. Normal Wi-Fi won't start either.";;
             iwm)    CARD_TIER=port; fail "Older card (7000/8000/9000 series on the iwm driver part). It has no AirDrop code, and its firmware has no"
@@ -205,7 +205,7 @@ ITLWM=$(kext_version com.zxystd.itlwm)
 if [ -n "$AIRPORT" ]; then
     pass "AirportItlwm $AIRPORT is loaded."
 elif [ -n "$ITLWM" ]; then
-    fail "itlwm $ITLWM is loaded. AirDrop requires AirportItlwm (the native Wi-Fi variant), not itlwm with HeliPort."
+    fail "itlwm $ITLWM is loaded. This AirDrop build uses AirportItlwm (the native Wi-Fi variant), not itlwm with HeliPort."
 else
     warn "No Intel Wi-Fi driver is loaded. The card check above used PCI IDs only."
 fi
@@ -342,9 +342,20 @@ fi
 if [ -z "$SP" ]; then
     warn "macOS returned no Wi-Fi details (is Wi-Fi on?)."
 elif [ -z "$CC" ] || [ "$CC" = "ZZ" ] || [ "$CC" = "00" ]; then
-    warn "Country code: ${CC:-none}. The firmware hasn't learned a country, so channels 149 and 44 are listen-only for now."
-    warn "AirDrop will use channel 6 (very slow) until a nearby network advertises the country."
-    CH149_STATE=no-country
+    # Without a country, the driver still uses 149 or 44 once it has heard a router beaconing there (or the
+    # station is connected in the same band), so the listener's own channel decides, when the build runs.
+    LISTEN_CH=""
+    [ -n "$MARKER" ] && LISTEN_CH=$(ioreg -l -w0 2>/dev/null | sed -n 's/.*"ITLAWDLCoexChannel" = \([0-9]*\).*/\1/p' | head -1)
+    if [ "$LISTEN_CH" = "149" ] || [ "$LISTEN_CH" = "44" ]; then
+        info "Country code: ${CC:-none}. The firmware hasn't learned a country, but the listener is on channel $LISTEN_CH:"
+        info "routers heard on that channel (or your Wi-Fi in the same band) let the driver use it anyway."
+        CH149_STATE=no-country-open
+    else
+        warn "Country code: ${CC:-none}. The firmware hasn't learned a country, so channels 149 and 44 are listen-only for now."
+        warn "AirDrop will use channel 6 (very slow) until a nearby network advertises the country, or until routers"
+        warn "are heard on 149 or 44."
+        CH149_STATE=no-country
+    fi
 else
     pass "Country code: $CC. The firmware (or macOS's location, when the firmware has none) reports a country."
     CH149_STATE=country
@@ -452,12 +463,44 @@ if [ -n "$MARKER" ]; then
         fi
     fi
     ARGS=$(sysctl -n kern.bootargs 2>/dev/null)
+    # The tested set from docs/BOOT-FLAGS.md; keep the two in step. Flags without a value must match
+    # whole words; the two with a value (itlawdlintcoal=, itlawdltxqueue=) match by name.
     MISSING=""
     for f in -btleadv -itlawdlcoexprobe -itlawdliface -itlawdlnativeup -itlawdlcoexrx -itlawdlcoextx -itlawdlcoexmulti \
-             -itlawdlcoexdata -itlawdlcoexbatx -itlawdlcoexpeerpause; do
+             -itlawdlcoexdata -itlawdlmitx -itlawdlelicit -itlawdlcaps -itlawdlsvcmerge -itlawdlawsync \
+             -itlawdlcoexbatx -itlawdlcoexpeerpause -itlawdlcoexbatrace; do
         case " $ARGS " in *" $f "*) ;; *) MISSING="$MISSING $f";; esac
     done
-    [ -z "$MISSING" ] && pass "The main AirDrop boot flags are set." || warn "Missing AirDrop boot flags:$MISSING"
+    for f in itlawdlintcoal itlawdltxqueue; do
+        case " $ARGS" in *" $f="*) ;; *) MISSING="$MISSING $f=";; esac
+    done
+    if [ -z "$MISSING" ]; then
+        pass "All AirDrop boot flags of the tested set are set."
+    else
+        warn "Missing AirDrop boot flags:$MISSING"
+        warn "Use the whole tested set from docs/BOOT-FLAGS.md: a partial set can pass every other check here and still not work."
+        FLAGS_MISSING=1
+    fi
+    # Without the announcement (-itlawdlmitx) the sync frames carry no name or services, so other devices
+    # hear this Mac but never learn it offers AirDrop: nothing is listed and no AirDrop data arrives.
+    MI_STATE=$(ioreg -l -w0 2>/dev/null | sed -n 's/.*"ItlwmAWDLMiState" = "\([^"]*\)".*/\1/p' | head -1)
+    case "$MI_STATE" in
+        on) pass "The AirDrop announcement is on (ItlwmAWDLMiState = on).";;
+        on*) warn "The AirDrop announcement is on, on a build the driver hasn't verified: ItlwmAWDLMiState = $MI_STATE.";;
+        "") ;;
+        off) case " $ARGS " in
+                 *" -itlawdlmitx "*) warn "The AirDrop announcement is off (ItlwmAWDLMiState = off) although -itlawdlmitx is set.";;
+                 *) fail "The AirDrop announcement is off (ItlwmAWDLMiState = off) because -itlawdlmitx isn't set. Other devices"
+                    fail "can't discover this Mac: the radios hear each other, but no AirDrop data arrives (ITLAWDLCoexDataRx stays 0).";;
+             esac
+             MI_OFF=1;;
+        blocked*)
+            # Not a flag problem: on a build the driver hasn't verified, the announcement stays off (section 1).
+            warn "The AirDrop announcement is blocked: ItlwmAWDLMiState = $MI_STATE."
+            warn "The driver only sends it on verified macOS builds (or with -itlawdlanybuild, at the risk of a panic),"
+            warn "so other devices won't list this Mac.";;
+        *)  warn "The AirDrop announcement isn't running: ItlwmAWDLMiState = $MI_STATE."; MI_OFF=1;;
+    esac
 else
     info "Skipped: the AirDrop build isn't running."
 fi
@@ -510,6 +553,9 @@ case "${CH149_STATE:-}" in
 esac
 if [ "$NET_STACK" = pf ]; then
     echo "  ${YEL}pf has turned off macOS's user-space network path (section 7): AirDrop works, but transfers can be slower.${RST}"
+fi
+if [ -n "${FLAGS_MISSING:-}" ] || [ -n "${MI_OFF:-}" ]; then
+    echo "  ${YEL}The AirDrop boot flags are incomplete (section 6). Set the whole tested set from docs/BOOT-FLAGS.md before testing.${RST}"
 fi
 if [ "$BLOCKERS" -gt 0 ]; then
     echo "  ${RED}$BLOCKERS blocker(s) above stop it working on this Mac regardless of the card.${RST}"

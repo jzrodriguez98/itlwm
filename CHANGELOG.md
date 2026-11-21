@@ -1,5 +1,46 @@
 # Changelog
 
+**Release names.** `x.y.z-stage.n`: `alpha` releases bring new or untested changes for testers; `beta` releases are tested on the project's hackintosh; `n` counts the builds of one version. `z` counts fixes after a stable release, so it stays 0 until a version is declared stable, and 1.0.0 will be the first stable release. Releases up to 0.5.3 were named `-test1` (now alpha) and `-beta1`.
+
+## 0.6.0-beta.3
+
+**AirDrop**
+- **AirDrop on Sonoma ([#55](https://github.com/retropineaple/ForbiddenItlwm/issues/55), [PR #77](https://github.com/retropineaple/ForbiddenItlwm/pull/77), thanks to panjips and maddog860).** The Sonoma kext never switched on AirDrop's frame paths and never told macOS the card can do AWDL, so macOS didn't create `awdl0`. Both are fixed. One user reports AirDrop working both ways on an AX200 with 14.8.9 at 5–7 MB/s. Not tested here; the Tahoe and Sequoia kexts don't change.
+- **Mac → iPhone no longer stalls without `-itlawdlcoexmulti` ([#63](https://github.com/retropineaple/ForbiddenItlwm/issues/63), thanks to jkbuha).** When the listener shares the Mac's Wi-Fi channel, 0.6.0's receive-filter rule stopped Mac → iPhone sends. That mode now uses the earlier rule by default, so `-itlawdlfilterbysession` isn't needed there anymore. Nothing changes with `-itlawdlcoexmulti` (the tested set).
+- **The listener finds an iPhone that uses only channel 44 ([#35](https://github.com/retropineaple/ForbiddenItlwm/issues/35)).** With no Apple device heard yet, the listener stayed on 149 and never heard an iPhone that only uses 44 (Russia and Germany, for example). From 30 s after it starts, while it hasn't heard any device, it now spends 15 s of every minute on channel 6, where every Apple device spends a slot, and follows the iPhone from there. `-itlawdlnosearch6` turns it off; `ITLAWDLCoexSearch6` and `ITLAWDLCoexSearch6Dwells` show it.
+- **One-antenna cards report one stream ([#87](https://github.com/retropineaple/ForbiddenItlwm/issues/87)).** `-itlawdlcaps` told macOS and other devices the card has two spatial streams, also on cards with one antenna (9461, 9462, AX101), so an iPhone could send at rates the card can't receive. It now reports what the card has. New key `ItlwmCardStreams`.
+
+**Wi-Fi**
+- **Correct keys on SHA-256 networks ([PR #84](https://github.com/retropineaple/ForbiddenItlwm/pull/84), thanks to ann0see).** For networks that use SHA-256 key derivation (802.1X-SHA256, which the driver picks when an enterprise network offers it, and PSK-SHA256-only networks), the driver hashed the label with its trailing NUL and asked for 64 bytes instead of 48, so every such key came out wrong and the handshake failed. Plain WPA2-PSK uses a different function and was never affected. A known-answer test now checks the derivation. Not tested here (this hackintosh's network doesn't use SHA-256 keys).
+
+**Docs:** TROUBLESHOOTING covers an iPhone kept waiting by another Apple device nearby (#81), Universal Clipboard from the Mac with an AirDrop window open (#65), DFS channels without `-itlawdlcoexmulti` (#63) and turning Bluetooth off to join the iPhone's hotspot (#39). INSTALL: disable BlueToolFixup too if a macOS update still fails (#78). BOOT-FLAGS and ROADMAP: Wi-Fi 6 (`itlwm_he=1`) can drop Wi-Fi when AirDrop starts (#83). README: 9560/9461/9462 on 10th-gen and newer boards run on the part of the driver with AirDrop (#87); AirDrop with a Mac as the other device on the stock release (#81). TESTED-HARDWARE adds #45, #53, #77, #81, #83 and #87.
+
+**Tested on** the project's hackintosh (Tahoe 26.7.1, AX211, the tested flag set): AirDrop both ways, Bluetooth headphones, the listener on 149 at 80 MHz, `ItlwmCardStreams` 2. The channel-6 search was tested here with an earlier build (it found an iPhone in airplane mode and stopped). Not tested here: the Sonoma fix (one user's report), shared mode without `-itlawdlcoexmulti` (#63), SHA-256 networks (#84), one-antenna cards (#87), and the Sequoia and Sonoma builds (built and checked offline).
+
+BTLEAdvFixup is unchanged (0.9.3).
+
+## 0.6.0-beta.2
+
+**Bluetooth: BTLEAdvFixup 0.9.3**
+- **New BLE mice and keyboards pair again ([#71](https://github.com/retropineaple/ForbiddenItlwm/issues/71)).** A security fix in 0.9.2 forgot the controller's event pipe on its first command, so the LE data-length fix never ran and no `BTLEAdvLength*` key appeared. The pipe is now kept. New key `BTLEAdvEventPipes`.
+
+**AirDrop**
+- **The listener no longer jumps between 44 and 149 ([#68](https://github.com/retropineaple/ForbiddenItlwm/issues/68)).** It followed the last channel sequence heard from any nearby device, which can change every few seconds, and each move dropped block ack, so transfers were cut off. A move between two 5 GHz channels now needs the same choice for 60 s and no AirDrop data for 30 s. It still moves at once when the device never comes to the current channel, and to or from channel 6. New key `ITLAWDLCoexMovesSettleDropped`.
+- **`-itlawdlsta44` (test flag, [PR #75](https://github.com/retropineaple/ForbiddenItlwm/pull/75), thanks to Gyuri1999):** with the Mac's Wi-Fi on 44 and the other device seen on 44 too, the listener shares 44. 27 MB/s with a MacBook Air M1; not tested with iPhones.
+- **`-itlawdlanybuild` now turns AirDrop on fully** on a macOS build the driver hasn't verified, the announcement included, so a new build can really be tested (before, other devices never listed the Mac there). `ItlwmAWDLMiState` reads "on (unverified build, -itlawdlanybuild)". Still a panic risk; use a USB stick.
+- **The AirDrop channels macOS asks for are published** (`ItlwmAWDLReqSeqChannels`, `ItlwmAWDLReqMasterChannel`, `ItlwmAWDLReqSecondaryMasterChannel`), to compare with the listener's own choice. Nothing follows them yet.
+
+**Wi-Fi**
+- **Joining in crowded places and on 802.1X (Enterprise) networks ([#69](https://github.com/retropineaple/ForbiddenItlwm/issues/69), from runmain's patch).** With more networks in range than the scan cache holds, the network macOS asked to join was dropped before the scan ended; it's now kept. On 802.1X networks the link now comes up at association, so macOS's EAP login can go out (everything else is still held back until the keys are installed). Tested on an AX210 with WPA2-Enterprise; not tested here.
+- **Opt-in `itlwm_scanout` and `itlwm_lqmint` ([PR #66](https://github.com/retropineaple/ForbiddenItlwm/pull/66), thanks to alikaylan, [#64](https://github.com/retropineaple/ForbiddenItlwm/issues/64)):** faster full scans while connected, and fewer link-quality updates. Both off by default.
+
+**Tools**
+- `check_compat.sh` checks the whole tested flag set and the announcement ([PR #74](https://github.com/retropineaple/ForbiddenItlwm/pull/74), thanks to Gyuri1999), finds a driver kmutil doesn't list ([#73](https://github.com/retropineaple/ForbiddenItlwm/issues/73)), and no longer warns about channel 6 when the listener is already on 149 or 44 without a country.
+
+**Docs:** TROUBLESHOOTING covers the listener moving between 44 and 149, a missing SMBIOS serial ([#46](https://github.com/retropineaple/ForbiddenItlwm/issues/46)), a slow Wi-Fi menu with many remembered networks (#64) and BTLEAdvFixup 0.9.2 with BLE mice. ROADMAP adds macOS's channel choice and multi-channel research. TESTED-HARDWARE adds AirDrop with a Mac as the other device and the #38 sleep results.
+
+**Tested on** the project's hackintosh (Tahoe 26.7.1, AX211): AirDrop both ways, Bluetooth headphones, the listener on 149 at 80 MHz with no moves, `BTLEAdvEventPipes` 1. Not tested here: BLE mice (no device), 802.1X, `-itlawdlsta44`, `-itlawdlanybuild`, the Sequoia and Sonoma builds (built and checked offline).
+
 ## 0.6.0-beta.1
 
 The first beta of 0.6.0. Everything since 0.5.4-beta.2, including what 0.6.0-alpha.1 tested:
@@ -185,7 +226,7 @@ First public beta.
 - AirDrop between an Intel Wi-Fi Mac and an iPhone, both ways, while normal Wi-Fi stays connected.
 - Tested on an Intel AX211 with macOS 26.7.1 (25G241). About 22 MB/s each way when the iPhone's schedule allows it.
 - Based on AirportItlwm 2.4.1 for macOS Tahoe.
-- Upstream names its product `ForbiddenItlwm.kext`; this fork retains `AirportItlwm.kext` and `com.zxystd.AirportItlwm` so it replaces the fork’s existing AirportItlwm product in place.
+- The kext is renamed from `AirportItlwm.kext` to `ForbiddenItlwm.kext`, with bundle identifier `org.forbiddenitlwm.ForbiddenItlwm`. It replaces AirportItlwm, and the two can't be loaded together.
 - BTLEAdvFixup 0.8.0, bundle identifier `org.forbiddenitlwm.BTLEAdvFixup`.
 - `-itlawdlcoexlowlat` is disabled because it broke Wi-Fi on the AX211.
 

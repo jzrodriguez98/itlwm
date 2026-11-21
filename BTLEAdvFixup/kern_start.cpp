@@ -69,6 +69,8 @@ static uint64_t nowNanoseconds() {
 // Asynchronous originals the added commands were sent beside (audit P-R06), so testers' reports show
 // whether that case happens before anything is changed for it.
 static uint32_t asyncSeen {};
+// Interrupt IN pipes of the Intel controller seen being created.
+static uint32_t eventPipes {};
 
 static IOReturn patched_device_request(void *that, IOService *provider, StandardUSB::DeviceRequest &request, void *data,
                                        IOMemoryDescriptor *descriptor, unsigned int &length,
@@ -140,9 +142,10 @@ static IOReturn patched_device_request(void *that, IOService *provider, Standard
         if (hciOwner != that) {
             hciState = BTLEAdv::State{};
             hciOwner = that;
-            // A different controller object (re-enumerated, or a second one): the remembered pipe and any
-            // pending duplicates belonged to the old one (audit BT02).
-            interruptPipe = nullptr;
+            // A different controller object (re-enumerated, or a second one): any pending duplicates
+            // belonged to the old one (audit BT02). The pipe is kept: it's created before the controller's
+            // first command, so forgetting it here left the data-length fix off for good (#71). A new
+            // controller's pipe replaces it when that pipe is created.
             if (lengthLock) {
                 IOSimpleLockLock(lengthLock);
                 const uint32_t expired = lengthState.expired, aborts = lengthState.aborts;
@@ -219,8 +222,11 @@ static void captureInterruptPipe(void *that, StandardUSB::EndpointDescriptor con
     // overflow), which makes injection fail. The descriptor is the 7-byte USB layout:
     // bEndpointAddress (offset 2, bit 7 = direction in), bmAttributes (offset 3, bits 0-1 = type).
     auto *bytes = reinterpret_cast<const uint8_t *>(descriptor);
-    if (bytes[2] & 0x80 && (bytes[3] & 0x03) == 0x03)
+    if (bytes[2] & 0x80 && (bytes[3] & 0x03) == 0x03) {
         interruptPipe = that;
+        // Shows in reports that the fix has a pipe to work with (#71).
+        noteHook("BTLEAdvEventPipes", bumpCounter(eventPipes));
+    }
 }
 
 // The pipe is created through one of two overloads, depending on the macOS version.

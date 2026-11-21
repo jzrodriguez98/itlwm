@@ -58,6 +58,7 @@
 #include <crypto/aes.h>
 #include <crypto/cmac.h>
 #include <crypto/key_wrap.h>
+#include <PTKDerivation.hpp>
 
 void    ieee80211_prf(const u_int8_t *, size_t, const u_int8_t *, size_t,
         const u_int8_t *, size_t, u_int8_t *, size_t);
@@ -402,29 +403,19 @@ ieee80211_kdf(const u_int8_t *key, size_t key_len, const u_int8_t *label,
 /*
  * Derive Pairwise Transient Key (PTK) (see 8.5.1.2).
  */
+static_assert(sizeof(struct ieee80211_ptk) >= PTKDerivation::kCcmpPtkLen,
+    "struct ieee80211_ptk must hold a 48-byte CCMP PTK");
+static_assert(IEEE80211_PMK_LEN == PTKDerivation::kPmkLen,
+    "PTK derivation assumes a 32-byte PMK");
+
 void
 ieee80211_derive_ptk(enum ieee80211_akm akm, const u_int8_t *pmk,
     const u_int8_t *aa, const u_int8_t *spa, const u_int8_t *anonce,
     const u_int8_t *snonce, struct ieee80211_ptk *ptk)
 {
-	void (*kdf)(const u_int8_t *, size_t, const u_int8_t *, size_t,
-        const u_int8_t *, size_t, u_int8_t *, size_t);
-    u_int8_t buf[2 * IEEE80211_ADDR_LEN + 2 * EAPOL_KEY_NONCE_LEN];
-    int ret;
-
-    /* Min(AA,SPA) || Max(AA,SPA) */
-    ret = memcmp(aa, spa, IEEE80211_ADDR_LEN) < 0;
-    memcpy(&buf[ 0], ret ? aa : spa, IEEE80211_ADDR_LEN);
-    memcpy(&buf[ 6], ret ? spa : aa, IEEE80211_ADDR_LEN);
-
-    /* Min(ANonce,SNonce) || Max(ANonce,SNonce) */
-    ret = memcmp(anonce, snonce, EAPOL_KEY_NONCE_LEN) < 0;
-    memcpy(&buf[12], ret ? anonce : snonce, EAPOL_KEY_NONCE_LEN);
-    memcpy(&buf[44], ret ? snonce : anonce, EAPOL_KEY_NONCE_LEN);
-
-    kdf = ieee80211_is_sha256_akm(akm) ? ieee80211_kdf : ieee80211_prf;
-    (*kdf)(pmk, IEEE80211_PMK_LEN, (const u_int8_t *)"Pairwise key expansion", 23,
-        buf, sizeof buf, (u_int8_t *)ptk, sizeof(*ptk));
+    PTKDerivation::derive(ieee80211_is_sha256_akm(akm), pmk, aa, spa,
+        anonce, snonce, (u_int8_t *)ptk, sizeof(*ptk),
+        ieee80211_kdf, ieee80211_prf);
 }
 
 static void

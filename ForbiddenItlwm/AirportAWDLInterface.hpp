@@ -82,8 +82,8 @@ public:
     IOReturn setAWDL_ELECTION_ID(apple80211_awdl_election_id *data) override { return storeRequested(requested_AWDL_ELECTION_ID, data, "AWDL_ELECTION_ID"); }
     IOReturn setAWDL_BSSID(apple80211_awdl_bssid *data) override { return storeRequested(requestedBSSID, data, "AWDL_BSSID"); }
     IOReturn setAWDL_ELECTION_METRIC(apple80211_awdl_election_metric *data) override { return storeRequested(requested_AWDL_ELECTION_METRIC, data, "AWDL_ELECTION_METRIC"); }
-    IOReturn setAWDL_SYNCHRONIZATION_CHANNEL_SEQUENCE(apple80211_awdl_sync_channel_sequence *data) override { return storeRequested(requested_AWDL_SYNCHRONIZATION_CHANNEL_SEQUENCE, data, "AWDL_SYNCHRONIZATION_CHANNEL_SEQUENCE"); }
-    IOReturn setAWDL_MASTER_CHANNEL(apple80211_awdl_master_channel *data) override { return storeRequested(requested_AWDL_MASTER_CHANNEL, data, "AWDL_MASTER_CHANNEL"); }
+    IOReturn setAWDL_SYNCHRONIZATION_CHANNEL_SEQUENCE(apple80211_awdl_sync_channel_sequence *data) override;
+    IOReturn setAWDL_MASTER_CHANNEL(apple80211_awdl_master_channel *data) override;
     IOReturn setAWDL_SYNC_STATE(apple80211_awdl_sync_state *data) override;
     IOReturn setAWDL_ELECTION_RSSI_THRESHOLDS(apple80211_awdl_election_rssi_thresholds *data) override { return storeRequested(requested_AWDL_ELECTION_RSSI_THRESHOLDS, data, "AWDL_ELECTION_RSSI_THRESHOLDS"); }
     IOReturn setAWDL_PRESENCE_MODE(apple80211_awdl_presence_mode *data) override { return storeRequested(requested_AWDL_PRESENCE_MODE, data, "AWDL_PRESENCE_MODE"); }
@@ -92,7 +92,7 @@ public:
     IOReturn setAWDL_SYNC_FRAME_TEMPLATE(apple80211_awdl_sync_frame_template *data) override;
     IOReturn setAWDL_ELECTION_PARAMS(apple80211_awdl_election_params *) override;
     IOReturn setAWDL_PEER_TRAFFIC_REGISTRATION(apple80211_awdl_peer_traffic_registration *) override;
-    IOReturn setAWDL_SECONDARY_MASTER_CHANNEL(apple80211_awdl_secondary_master_channel *data) override { return storeRequested(requested_AWDL_SECONDARY_MASTER_CHANNEL, data, "AWDL_SECONDARY_MASTER_CHANNEL"); }
+    IOReturn setAWDL_SECONDARY_MASTER_CHANNEL(apple80211_awdl_secondary_master_channel *data) override;
     IOReturn setAWDL_AF_TX_MODE(apple80211_awdl_af_tx_mode *) override;
     IOReturn setAWDL_MIN_RATE(apple80211_awdl_min_rate*) override { return unsupported("setAWDL_MIN_RATE"); }
     IOReturn setAWDL_ENCRYPTION_KEYS(apple80211_key*) override { return unsupported("setAWDL_ENCRYPTION_KEYS"); }
@@ -204,6 +204,9 @@ private:
         IOLockUnlock(configurationLock);
         return result;
     }
+    // What macOS asks for as this Mac's AWDL channels (published only; the listener doesn't follow it yet).
+    uint32_t requestedSequenceSets = 0;
+    void publishRequestedSequence();
     void releaseNetworkResources();
     static UInt32 rejectTransmit(OSObject*, IOSkywalkTxSubmissionQueue*, IOSkywalkPacket *const*, UInt32, void*);
     static UInt32 deferReceive(OSObject*, IOSkywalkRxSubmissionQueue*, IOSkywalkPacket *const*, UInt32, void*);

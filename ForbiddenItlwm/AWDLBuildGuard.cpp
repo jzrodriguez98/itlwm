@@ -22,6 +22,7 @@
 // may reference Apple's AWDL classes, which this kext would then need at load time.
 bool itlAWDLBuildAllowed() { return false; }
 bool itlAWDLBuildVerified() { return false; }
+bool itlAWDLBuildForced() { return false; }
 const char *itlAWDLBuildStatus() { return "unavailable: AirDrop isn't ported to this macOS version yet"; }
 #else
 
@@ -47,6 +48,7 @@ struct Anchor { unsigned slot; uintptr_t expected; };
 
 int gAllowed = -1;
 bool gVerified = false;
+bool gForced = false;   // allowed only because of -itlawdlanybuild
 const char *gStatus = "not-checked";
 
 bool vtableMatches()
@@ -121,6 +123,7 @@ bool itlAWDLBuildAllowed()
     } else if (anyBuild) {
         gStatus = "unverified build, allowed by -itlawdlanybuild";
         gAllowed = 1;
+        gForced = true;
     } else {
         gStatus = "blocked: unverified macOS build";
         gAllowed = 0;
@@ -136,6 +139,15 @@ bool itlAWDLBuildAllowed()
 // gVerified only says the kernel is on the list. The macOS build must pair with it too (audit P-A08);
 // kern.osversion can still be empty when the driver starts, so it's read here, when first needed (the
 // peer manager's start), and the answer kept once the build is known.
+// True when AirDrop runs only because the tester set -itlawdlanybuild on a build the driver hasn't verified.
+// From 0.6.0-beta.2 the master indication is sent there too, so the build can be tested for real; its request
+// layout is then unchecked, the risk the flag already carries (BOOT-FLAGS).
+bool itlAWDLBuildForced()
+{
+    itlAWDLBuildAllowed();
+    return gForced;
+}
+
 bool itlAWDLBuildVerified()
 {
     static int pairVerified = -1;

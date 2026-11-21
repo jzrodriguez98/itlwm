@@ -343,15 +343,18 @@ struct ScanTiming {
 // i.e. low latency. Splitting by default made each passive channel cost
 // ~0.8 s and full scans ~20 s. A 30 TU home time on quiet links (Linux's
 // lighter setting) coincided with firmware resets on AX210, so it is not used.
+// maxOutOverrideTU (boot flag itlwm_scanout=120..480) lengthens each visit so
+// several passive dwells fit before returning home; the 120 TU home time stays.
+// For Macs whose Wi-Fi carries little traffic. 0 keeps the 120 TU default.
 inline ScanTiming scanTiming(uint32_t awayMilliseconds, bool associated,
-                             bool supportsFragmentation)
+                             bool supportsFragmentation, uint32_t maxOutOverrideTU = 0)
 {
     if (!associated)
         return {0, false, 0};
     uint64_t requested = uint64_t(awayMilliseconds) * 1000 / 1024;
     if (awayMilliseconds && requested < 100 && supportsFragmentation)
         return {requested < 44 ? 44 : uint32_t(requested), true, 95};
-    return {120, false, 120};
+    return {maxOutOverrideTU > 120 ? maxOutOverrideTU : 120, false, 120};
 }
 
 inline uint16_t read16(const uint8_t *p) {

@@ -598,6 +598,7 @@ getMCS_INDEX_SET(struct apple80211_mcs_index_set_data *ad)
 }
 
 extern bool itlAWDLBuildAllowed();
+extern int itlAWDLNoteCardStreams(const struct ieee80211com *ic);
 // -itlawdlcaps: answer the native stack's HT and VHT capability requests. Without them it
 // assumes one HT stream and no VHT, and advertises that to AWDL peers in TLV 7 and leaves out
 // TLV 17, so a peer sends to us at 20 MHz on one stream. The values are the AX211's own.
@@ -626,9 +627,9 @@ getHT_CAPABILITY(struct apple80211_ht_capability *data)
     data->hc_cap = 0x006f;
     // Maximum A-MPDU 64 KB, minimum spacing 8 us.
     data->hc_param = 0x1b;
-    // MCS 0 to 15: two spatial streams.
+    // MCS 0 to 15 (two spatial streams), or 0 to 7 on a card with one (#87).
     data->hc_mcsset[0] = 0xff;
-    data->hc_mcsset[1] = 0xff;
+    data->hc_mcsset[1] = itlAWDLNoteCardStreams(fHalService->get80211Controller()) == 1 ? 0x00 : 0xff;
     return kIOReturnSuccess;
 }
 
@@ -662,9 +663,11 @@ getVHT_CAPABILITY(struct apple80211_vht_capability *data)
     element[3] = uint8_t(info >> 8);
     element[4] = uint8_t(info >> 16);
     element[5] = uint8_t(info >> 24);
-    // MCS 0 to 9 on streams 1 and 2, none on the others, for receive and transmit.
-    element[6] = 0xfa; element[7] = 0xff;
-    element[10] = 0xfa; element[11] = 0xff;
+    // MCS 0 to 9 on streams 1 and 2 (stream 1 only on a one-stream card, #87), none on the others,
+    // for receive and transmit.
+    const uint8_t streams = itlAWDLNoteCardStreams(fHalService->get80211Controller()) == 1 ? 0xfe : 0xfa;
+    element[6] = streams; element[7] = 0xff;
+    element[10] = streams; element[11] = 0xff;
     return kIOReturnSuccess;
 }
 

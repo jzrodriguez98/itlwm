@@ -123,6 +123,8 @@
 #include "rs.h"
 #ifdef AIRPORT_WCL
 #include "../../ForbiddenItlwm/WCL/WCL.hpp"
+// Away cap for full scans while associated, from itlwm_scanout (0 = default 120 TU); defined in ItlIwx.cpp.
+extern uint32_t itlScanMaxOutTU;
 #endif
 
 uint16_t ItlIwm::
@@ -387,7 +389,7 @@ iwm_lmac_scan(struct iwm_softc *sc, int bgscan)
     int err, async = bgscan;
 #ifdef AIRPORT_WCL
     const auto timing = AirportWCL::scanTiming(ic->ic_wcl_scan_away_time_ms, bgscan,
-        isset(sc->sc_ucode_api, IWM_UCODE_TLV_API_FRAGMENTED_SCAN));
+        isset(sc->sc_ucode_api, IWM_UCODE_TLV_API_FRAGMENTED_SCAN), itlScanMaxOutTU);
 #endif
     
     req_len = sizeof(struct iwm_scan_req_lmac) +
@@ -662,7 +664,7 @@ iwm_umac_scan(struct iwm_softc *sc, int bgscan)
     int err, async = bgscan;
 #ifdef AIRPORT_WCL
     const auto timing = AirportWCL::scanTiming(ic->ic_wcl_scan_away_time_ms, bgscan,
-        isset(sc->sc_ucode_api, IWM_UCODE_TLV_API_FRAGMENTED_SCAN));
+        isset(sc->sc_ucode_api, IWM_UCODE_TLV_API_FRAGMENTED_SCAN), itlScanMaxOutTU);
 #endif
     
     req_len = iwm_umac_scan_size(sc);

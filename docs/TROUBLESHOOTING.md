@@ -24,12 +24,14 @@ The driver's log doesn't reach the unified log, so its state is only in the I/O 
 
 The driver only starts AirDrop on macOS builds whose Wi-Fi stack was checked: Tahoe 26.7.1 to 26.7.3, Sequoia 15.8 to 15.8.3 (15.8.1 and 15.8.2 run checked kernels; any other 15.8.x kernel starts as "expected"), and Sonoma 14.8.9.
 - **Nothing at all, and no ForbiddenItlwm keys:** check that you used the kexts for your macOS version. A ForbiddenItlwm built for another macOS version refuses to start, and logs `this kext is for macOS …`.
-- **`blocked: unverified macOS build`:** your build isn't on the list yet. Normal Wi-Fi still works. Please open an issue with your build (`sw_vers -buildVersion`) so it can be checked. `-itlawdlanybuild` forces AirDrop on anyway, at the risk of a kernel panic.
+- **`blocked: unverified macOS build`:** your build isn't on the list yet. Normal Wi-Fi still works. Please open an issue with your build (`sw_vers -buildVersion`) so it can be checked. `-itlawdlanybuild` forces AirDrop on anyway, announcement included from 0.6.0-beta.2, at the risk of a kernel panic. Use it only from a USB stick.
 - **`blocked: IO80211AWDLProtocol table differs`:** the Wi-Fi stack isn't the one the driver was checked against. If you applied OpenCore Legacy Patcher's "Modern Wireless" root patches, revert them. Otherwise Apple changed the part of its Wi-Fi stack the driver plugs into. Starting AirDrop would likely panic, so no flag overrides this. Please report your build.
 
 ## The listener is on channel 6, or `CountryLearned` is No
 
 Apple devices use channel 149 or 44 for AirDrop on 5 GHz, and each picks one by its own country rules (Japan, Germany and Russia, for example, use 44). From 0.6.0 the listener follows the iPhone: once it has heard the iPhone, it moves to the channel the iPhone uses (`ITLAWDLCoexPeer5GHz` shows which: 44, 149, or 1 for neither). Before it has heard one, it starts on 149.
+
+**It moves to 6 for about 15 s every minute:** that's the search for a device it hasn't heard yet (from the next release, #35). A listener on 149 never hears a phone that uses only 44, so while no device's schedule has been heard it waits on 6, where every Apple device spends a slot, then follows the device it finds. `ITLAWDLCoexSearch6` shows a search in progress and `ITLAWDLCoexSearch6Dwells` counts them; it stops as soon as a device is heard. `-itlawdlnosearch6` turns it off.
 
 The firmware opens channel 149 only after a nearby network tells it the country.
 - Make sure some 5 GHz network that advertises a country is in range. Switching on an iPhone's Personal Hotspot nearby, without joining it, has worked.
@@ -38,9 +40,22 @@ The firmware opens channel 149 only after a nearby network tells it the country.
 - **Channels 149 to 161 marked passive** (China, for example): from 0.5.0, once the hackintosh hears a Wi-Fi network's beacon on one of these channels, the listener may use it (Linux does this only before the country is known; here it also counts after, see HOW-IT-WORKS). `ITLAWDLCoexBeaconHints` shows which channels were heard (bits 0 to 3 = 149, 153, 157, 161). A router on 149 at 80 MHz covers all four. The same applies to 36 to 48 for channel 44 (bits 8 to 11). From 0.6.0 such a channel can also be used while the Mac's own Wi-Fi is connected on a channel in the same group (36–48, 52–64, 100–144 or 149–165), if the firmware marks it for that (Linux's rule for Wi-Fi Direct interfaces): `ITLAWDLCoexIrConcurrent` lists the channels, `ITLAWDLCoexIrConcurrentUsed` counts the uses. With neither, AirDrop stays on 6.
 - The driver never overrides the country's rules, and `itlwm_cc` doesn't help.
 
+## The listener moves between 44 and 149
+
+`ITLAWDLCoexMoves` and `ITLAWDLCoexPeer5GHzChanges` keep rising, `ITLAWDLCoexChannel` alternates between 44 and 149, and `ITLAWDLCoexBaTxStateName` falls back to `asking` or `off` after each move ([#68](https://github.com/retropineaple/ForbiddenItlwm/issues/68)). Transfers are slow or never finish.
+
+Seen with the router on channel 44 and the other device on the same network. That device's channel sequence then has 44 in most slots, its Wi-Fi slots included, and 149 in a few AWDL slots, for example `<2c2c952c2c2c2c2c06952c9595952c2c>`. The listener follows it to 149; when a later sequence leaves 149 out, it comes back to 44.
+
+- **From the next build** the listener moves between two 5 GHz channels only once the same choice has held for 60 s and no AirDrop data has flowed for 30 s, so it no longer moves every few seconds or during a transfer. `ITLAWDLCoexMovesSettleDropped` counts the choices that changed before they settled.
+- **Test flag:** add `-itlawdlsta44`. While the Mac's own Wi-Fi is on 44 and the other device is seen on 44 too, the listener then stays on 44 and shares the station's channel. `ITLAWDLCoexStation44` shows Yes, and `ITLAWDLCoexMoves` should stay at 0. Confirmed with a MacBook Air M1 on an AX200 (27 MB/s to the hackintosh, 20 MB/s from it); not tested with iPhones, so please report your result.
+- **Without the flag:** move the router off 44. On 100 and up the listener keeps 44 at 80 MHz to itself, but the radio then time-shares between the two channels.
+
 ## The iPhone doesn't list the Mac
 
+- **Boot flags:** check that the whole tested set from [BOOT-FLAGS.md](BOOT-FLAGS.md) is set, not part of it. Without `-itlawdlmitx` the driver, the listener, `awdl0` and Bluetooth all look healthy and `ITLAWDLCoexPeerSyncFrames` rises, but `ItlwmAWDLMiState` is `off`, `ItlwmAWDLSyncMIBuilt` stays 0 and `ITLAWDLCoexDataRx` stays 0: the other device hears the Mac but never learns it offers AirDrop. `check_compat.sh` checks the whole set and `ItlwmAWDLMiState`.
+- **The Mac's Wi-Fi on a radar (DFS) channel, 52–144:** without `-itlawdlcoexmulti` the listener shares that channel, where no Apple device looks for AirDrop, so nothing is found (#63). Keep `-itlawdlcoexmulti`, as in the tested set.
 - **Bluetooth:** it must be on, with BTLEAdvFixup for your macOS version loaded, `-btleadv` set and IntelBTPatcher disabled. AirDrop finds devices over Bluetooth LE first. BTLEAdvFixup's patterns only match specific builds (26.7.1 and, from 0.8.1, 26.7.3 and 26.7.2, with 26.7.2's own pattern for one site from 0.9.1, on Tahoe; 15.8, 15.8.2 and 15.8.3 on Sequoia; from 0.9.0, 14.8.9 on Sonoma): `check_compat.sh` shows whether they match yours. To check it's running: `ioreg -l -w0 -d1 | grep '"BTLEAdv'` should show `BTLEAdvHookRouted` = 1. On Sequoia, BTLEAdvFixup before 0.8.3 never started.
+- **SMBIOS serial number** ([#46](https://github.com/retropineaple/ForbiddenItlwm/issues/46)): with an empty PlatformInfo → Generic, macOS uses the motherboard maker's serial, Apple's identity service never registers the Mac, and AirDrop drops the devices it finds: nothing is listed on either side, though every check here passes. `rapportd` then logs `Failed to get self IDS Correlation Identifier`. Generate SystemSerialNumber and MLB with `macserial` for your SMBIOS model, set ROM to the Wi-Fi card's MAC address (see the iMessage section below), and reboot.
 - **AirDrop settings:** with Contacts Only, the two devices must share an Apple Account or know each other as contacts. Try Everyone for 10 Minutes to rule this out.
 - **Is the iPhone heard?** Read `ITLAWDLCoexPeerSyncFrames` twice, a few seconds apart, with the iPhone's share sheet open. If it rises, the radios hear each other.
 - **Unlock the iPhone and keep the share sheet open** for 10 to 15 seconds.
@@ -78,19 +93,40 @@ This is the main known problem. The time goes into the iPhone finding the Mac's 
 
 From 0.6.0 the driver counts what happens to macOS's scan requests (#20, #24, #45). After the list has looked wrong for a while, run `ioreg -l -w0 | grep -E '"ItlwmScan(Stats|StatsSTA|Last)"'` and post the output with your report. It holds counts only, no network names. On Sonoma, `ItlwmScanStats` exists from 0.6.0-beta.1 (0.6.0-alpha.1 had no counters there).
 
+## The Wi-Fi menu or the Wi-Fi settings are slow
+
+In a busy area, with many networks in range, the Wi-Fi menu and System Settings → Wi-Fi can take seconds to minutes to refresh ([#64](https://github.com/retropineaple/ForbiddenItlwm/issues/64)).
+
+- **Remove old remembered networks** in System Settings → Wi-Fi → Advanced. For every network it lists, macOS checks the whole remembered list; one user went from 148 remembered networks to 24, and the check from 1.7–4.6 s per row to 0.15 s. This is macOS, not the driver, and helped the most.
+- **Faster scans while connected:** the opt-in boot flag `itlwm_scanout=360` lets each off-channel visit cover several passive channels (BOOT-FLAGS). On an AX210 full scans went from 8–14 s to about 4.7 s.
+
 ## A new Bluetooth LE mouse or keyboard won't pair
 
 Fixed in BTLEAdvFixup 0.9.1 (from 0.5.4-beta.2, #27). Earlier versions, with IntelBTPatcher disabled, let a new LE mouse or keyboard connect but never finish pairing; devices paired before kept working. Update BTLEAdvFixup. If a device still won't pair with 0.9.1, check `ioreg -l -w0 -d 1 | grep -E '"BTLEAdv(PipeHooks|LengthRewrites|LengthFailures)"'` while pairing (`PipeHooks` should be 5, and `LengthRewrites` should go up) and report it.
 
 BTLEAdvFixup 0.9.2 (0.6.0-beta.1) also stops that fix from taking over the controller's event pipe when a pairing round doesn't finish ([PR #61](https://github.com/retropineaple/ForbiddenItlwm/pull/61)): with 0.9.1, that could leave USB devices unresponsive until a cold boot, or panic. `BTLEAdvLengthExpired` and `BTLEAdvLengthAborts` count rounds given up.
 
+**With BTLEAdvFixup 0.9.2 new LE mice and keyboards don't pair again** ([#71](https://github.com/retropineaple/ForbiddenItlwm/issues/71)): a security fix in it switched the data-length fix off completely, and no `BTLEAdvLength*` key ever appears. Use 0.9.3 (0.6.0-beta.2). `BTLEAdvEventPipes` should then be 1 or more.
+
 ## AirPods drop out while playing Apple Music
 
 On one AX211 machine, AirPods Pro 3 went silent and disconnected within seconds of starting Apple Music, then reconnected ([#52](https://github.com/retropineaple/ForbiddenItlwm/issues/52)). The fix there was `-btlfxa2dpcheck`, an option of the BlueToolFixup-FixA2DP fork (not of ForbiddenItlwm), which works alongside BTLEAdvFixup.
 
+## One device works, but an iPhone stays on "Waiting"
+
+The driver keeps block ack with one Apple device at a time, and keeps it for as long as that device has exchanged data in the last ten minutes. Another Mac or an iPad nearby can hold it, and the iPhone's requests are then dropped (#81). To check, run this while an iPhone send fails:
+```
+ioreg -l -w0 | grep -E '"ITLAWDLCoex(BaPeerAdded|BaOtherPeer|BaRequests)"'
+```
+A high `ITLAWDLCoexBaOtherPeer` means another device holds it. Put that device to sleep, or turn its Wi-Fi off, for about ten minutes, then try the iPhone again.
+
+## Universal Clipboard or Handoff from the Mac stops working
+
+Close any AirDrop window in Finder and any AirDrop share sheet. The Intel Bluetooth controller has one legacy advertising set, and while AirDrop is browsing, macOS gives it to AirDrop instead of the clipboard (#65). To check, `/usr/bin/log show --last 5m --predicate 'process == "bluetoothd" AND eventMessage CONTAINS "current advertisers"'` should list type 12 while you copy.
+
 ## Instant Hotspot, Sidecar or Universal Control don't work
 
-Not supported yet. Instant Hotspot's Bluetooth connection to the iPhone times out (#39, #40): join the hotspot as a normal network instead, with its password, from the Wi-Fi list or with `networksetup -setairportnetwork en0 "<network name>" <password>`. Sidecar and Universal Control need AWDL traffic registration, which the driver doesn't do yet; Sidecar over USB works (#42).
+Not supported yet. Instant Hotspot's Bluetooth connection to the iPhone times out (#39, #40): join the hotspot as a normal network instead, with its password, from the Wi-Fi list or with `networksetup -setairportnetwork en0 "<network name>" <password>`. If that fails too, turn the Mac's Bluetooth off for the join and back on afterwards: while it's on, macOS can still send the join down the Instant Hotspot path (#39). Sidecar and Universal Control need AWDL traffic registration, which the driver doesn't do yet; Sidecar over USB works (#42).
 
 ## Bluetooth turns off after some hours, and `bluetoothd` crash reports say `KERN_MEMORY_ERROR`
 
@@ -105,7 +141,7 @@ Until there's a fix: a full power-off (not a restart) brings Bluetooth back. Ple
 The kext can be loaded (`kmutil` lists it) while the driver itself failed to start.
 - **0.4.0 and 0.4.1 failed to start on some machines** (#14, #16). Use 0.5.0-test1 or later, or 0.3.x.
 - **Check the start result:** `ioreg -l -w0 | grep -E '"ItlwmStart'`. From 0.5.0, a failed start leaves `ItlwmStartResult` = `failed` and the driver's own messages in `ItlwmStartLog`. Attach both to an issue.
-- **Leftovers from an older AirportItlwm setup** (the cause in #14): The AirDrop-enabled AirportItlwm build needs macOS's own Wi-Fi stack. Revert OpenCore Legacy Patcher's "Modern Wireless" root patches, and remove from config.plist any `Kernel → Block` entry for `com.apple.iokit.IOSkywalkFamily`, any injected `IOSkywalkFamily.kext` or `IO80211FamilyLegacy.kext`, and any other `AirportItlwm.kext` or `itlwm.kext`.
+- **Leftovers from an older AirportItlwm setup** (the cause in #14): ForbiddenItlwm needs macOS's own Wi-Fi stack. Revert OpenCore Legacy Patcher's "Modern Wireless" root patches, and remove from config.plist any `Kernel → Block` entry for `com.apple.iokit.IOSkywalkFamily`, any injected `IOSkywalkFamily.kext` or `IO80211FamilyLegacy.kext`, and any other `AirportItlwm.kext` or `itlwm.kext`.
 - **`MinKernel`/`MaxKernel`:** they must match the kext's macOS version (see [INSTALL.md](INSTALL.md)).
 
 ## Normal Wi-Fi stopped working

@@ -1,4 +1,4 @@
-# Installing ForbiddenItlwm
+# Installing the AirDrop AirportItlwm build
 
 This beta has been tested on one hackintosh: an HP Envy x360 13-bf with an Intel AX211, on macOS 26.7.1 (25G241), booted with OpenCore 1.0.8, with an iPhone 11. Users report it working on 26.7.2 (25G332) and 26.7.3 (25G342). The Sequoia build (15.8.x) was verified offline. Users report Wi-Fi working on it. AirDrop needs 0.5.1-test1 or later; users confirmed it working on 15.8.1, 15.8.2, 15.8.3 and 15.6. The Sonoma build (14.8.9, test build) was verified offline only. The details are in [TESTED-HARDWARE.md](TESTED-HARDWARE.md). Read the whole page before you start.
 
@@ -9,7 +9,7 @@ This beta has been tested on one hackintosh: an HP Envy x360 13-bf with an Intel
   - **Sequoia:** `24H23` (15.8) and `24H241` (15.8.3) were checked offline, and `24H32` (15.8.1) and `24H232` (15.8.2) run those verified kernels. Use the Sequoia kexts. AirDrop transfers on Sequoia need 0.5.1-test1 or later.
   - **Sonoma (test build):** `23J631` (14.8.9) was checked offline. Use the Sonoma kexts. On other Sonoma 14.4+ builds the Sonoma kext runs as plain Wi-Fi.
   - On any other build the driver keeps AirDrop off and works as plain Wi-Fi.
-- **Use the kexts for your macOS version.** ForbiddenItlwm and BTLEAdvFixup are built separately for Tahoe, Sequoia and Sonoma. A ForbiddenItlwm built for the other version refuses to start, and BTLEAdvFixup's patterns won't match.
+- **Use the kexts for your macOS version.** AirportItlwm and BTLEAdvFixup are built separately for Tahoe, Sequoia and Sonoma. An AirportItlwm build for the other version refuses to start, and BTLEAdvFixup's patterns won't match.
 - **Revert OCLP Wi-Fi root patches.** ForbiddenItlwm uses the Wi-Fi stack that ships with macOS. If you applied OpenCore Legacy Patcher's "Modern Wireless" root patches for an older AirportItlwm, revert them first. Also remove what that setup added to config.plist: a `Kernel → Block` entry for `com.apple.iokit.IOSkywalkFamily`, and injected `IOSkywalkFamily.kext` or `IO80211FamilyLegacy.kext`.
 - **Run the checker:** `bash tools/compat/check_compat.sh`. It tells you whether your card and Bluetooth are likely to work.
 - **Use a USB stick.** Copy your working EFI folder to a USB stick and make every change there. Your internal EFI stays as it is, so if anything goes wrong you just boot without the stick.
@@ -19,7 +19,7 @@ This beta has been tested on one hackintosh: an HP Envy x360 13-bf with an Intel
 
 | Kext | Where from | Notes |
 | --- | --- | --- |
-| `AirportItlwm.kext` | This repository, Tahoe, Sequoia or Sonoma build | AirDrop-enabled AirportItlwm product |
+| `AirportItlwm.kext` | This branch, Tahoe, Sequoia or Sonoma build | AirDrop-enabled AirportItlwm product |
 | `BTLEAdvFixup.kext` | This repository, Tahoe, Sequoia or Sonoma build | Lets macOS start Bluetooth LE advertising on an Intel controller |
 | `Lilu.kext` | [acidanthera/Lilu](https://github.com/acidanthera/Lilu) | Tested with 1.7.2 |
 | `IntelBluetoothFirmware.kext` | [OpenIntelWireless/IntelBluetoothFirmware](https://github.com/OpenIntelWireless/IntelBluetoothFirmware) | Tested with 2.5.1 |
@@ -65,7 +65,11 @@ You need the Xcode Command Line Tools (`xcode-select --install`). Full Xcode isn
 
    For Sequoia, add `--target sequoia`, and for Sonoma `--target sonoma`, each with its own output folder. The result is `BTLEAdvFixup.kext` in the output folder.
 
-4. Optional, for developers: run the ABI audit. The audit checks every virtual slot of the AWDL interface against its macOS version's own table. It must report 568 of 568 for Tahoe, 563 of 563 for Sequoia with `--target sequoia --build build-sequoia`, and 547 of 547 for Sonoma with `--target sonoma --build build-sonoma`:
+4. Optional, for developers: run the offline tests and the ABI audit. The audit checks every virtual slot of the AWDL interface against its macOS version's own table. It must report 568 of 568 for Tahoe, 563 of 563 for Sequoia with `--target sequoia --build build-sequoia`, and 547 of 547 for Sonoma with `--target sonoma --build build-sonoma`:
+
+   ```bash
+   python3 tools/test_awdl.py
+   ```
 
    ```bash
    python3 tools/abi/audit_vtable.py --lifecycle-overrides
@@ -75,7 +79,7 @@ You need the Xcode Command Line Tools (`xcode-select --install`). Full Xcode isn
 
 All of this goes on the **USB stick's** EFI.
 
-1. **Kexts:** in `EFI/OC/Kexts`, replace the existing `AirportItlwm.kext` with this AirDrop-enabled build and add `BTLEAdvFixup.kext`.
+1. **Kexts:** in `EFI/OC/Kexts`, replace the existing `AirportItlwm.kext` with this branch's `AirportItlwm.kext`, and add `BTLEAdvFixup.kext`.
 
 2. **`Kernel` → `Add`:** keep this order, so each kext comes after what it depends on.
 
@@ -85,7 +89,7 @@ All of this goes on the **USB stick's** EFI.
    | 2 | `IntelBluetoothFirmware.kext` | `Contents/MacOS/IntelBluetoothFirmware` | |
    | 3 | `BlueToolFixup.kext` | `Contents/MacOS/BlueToolFixup` | `MinKernel` 21.0.0 |
    | 4 | `BTLEAdvFixup.kext` | `Contents/MacOS/BTLEAdvFixup` | `MinKernel` 21.0.0 |
-   | 5 | `AirportItlwm.kext` | `Contents/MacOS/AirportItlwm` | AirDrop-enabled replacement build |
+   | 5 | `AirportItlwm.kext` | `Contents/MacOS/AirportItlwm` | Use the existing AirportItlwm entry |
 
    **Recommended:** limit `AirportItlwm.kext` and `BTLEAdvFixup.kext` to their macOS version with `MinKernel` and `MaxKernel`, so a stick moved to another macOS doesn't load the wrong build:
 
@@ -111,7 +115,7 @@ All of this goes on the **USB stick's** EFI.
    ioreg -l -w0 | grep -E '"ItlwmAWDL(InterfaceBuild|BuildCheck)"|"ITLAWDLCoex(Added|Channel|CountryLearned)"'
    ```
 
-   You should see `forbidden-0.6.0-beta.1` (`forbidden-0.6.0-beta.1-sequoia` on Sequoia, `forbidden-0.6.0-beta.1-sonoma` on Sonoma), `BuildCheck` `verified`, `Added` Yes, `Channel` 149 (or 44 where your iPhone uses 44, for example in Japan) and `CountryLearned` Yes. `Channel` 6 means the firmware hasn't opened 149 or 44: see [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
+   You should see `forbidden-0.6.0-beta.3` (`forbidden-0.6.0-beta.3-sequoia` on Sequoia, `forbidden-0.6.0-beta.3-sonoma` on Sonoma), `BuildCheck` `verified`, `Added` Yes, `Channel` 149 (or 44 where your iPhone uses 44, for example in Japan) and `CountryLearned` Yes. `Channel` 6 means the firmware hasn't opened 149 or 44: see [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
 
 4. Or run `bash tools/compat/check_compat.sh` again. It now also reads the listener's state.
 5. Turn on AirDrop on both devices. Contacts Only works when the iPhone and the Mac share an Apple Account or know each other as contacts. Otherwise use Everyone for 10 Minutes.
@@ -119,12 +123,12 @@ All of this goes on the **USB stick's** EFI.
 
 ## Before a macOS update
 
-Boot once without `-btleadv` (or with BTLEAdvFixup disabled), then update. While BTLEAdvFixup is active, `bluetoothd`'s patched pages are what the system reads, and an incremental update that checks the file can fail. Then check that the new build is supported before turning `-btleadv` back on: see [the macOS builds](TESTED-HARDWARE.md#macos-builds).
+Boot once without `-btleadv` (or with BTLEAdvFixup disabled), then update. While BTLEAdvFixup is active, `bluetoothd`'s patched pages are what the system reads, and an incremental update that checks the file can fail. If the update still fails, disable BlueToolFixup and BTLEAdvFixup too for the update (#78): BlueToolFixup patches `bluetoothd` the same way, whatever the flags. Then check that the new build is supported before turning `-btleadv` back on: see [the macOS builds](TESTED-HARDWARE.md#macos-builds).
 
 ## Uninstalling
 
 On the stick (or your EFI, if you moved it there):
-1. Remove `AirportItlwm.kext` and `BTLEAdvFixup.kext`, and their `Kernel` → `Add` entries.
+1. Remove the test `AirportItlwm.kext` and `BTLEAdvFixup.kext`, and their `Kernel` → `Add` entries.
 2. Put `AirportItlwm.kext` back.
 3. Remove the `-itlawdl*`, `itlawdl*` and `-btleadv` boot flags.
 4. Reboot.

@@ -20,8 +20,8 @@ Kexts used with ForbiddenItlwm:
 
 | Kext | Version |
 | --- | --- |
-| ForbiddenItlwm | 0.1.0-beta1, 0.2.0-beta1, 0.4.0-beta1's changes in development builds, 0.5.0-test1, 0.6.0-alpha.1's changes in a development build, 0.6.0-beta.1 and 0.6.0-beta.2 (Tahoe, listener on 149) |
-| BTLEAdvFixup | 0.8.0, 0.8.2's changes in a development build, 0.9.0, 0.9.1, 0.9.2 and 0.9.3 (Tahoe) |
+| ForbiddenItlwm | 0.1.0-beta1, 0.2.0-beta1, 0.4.0-beta1's changes in development builds, 0.5.0-test1, 0.6.0-alpha.1's changes in a development build, 0.6.0-beta.1, 0.6.0-beta.2, 0.6.0-beta.3 and 0.6.0-beta.4 (Tahoe, listener on 149) |
+| IntelBTPatcher bundle (BTLEAdvFixup source) | 0.8.0, 0.8.2's changes in a development build, 0.9.0, 0.9.1, 0.9.2, 0.9.3 and 0.9.4 (Tahoe) |
 | Lilu | 1.7.2 |
 | IntelBluetoothFirmware | 2.5.1 |
 | BlueToolFixup | 2.7.3 |
@@ -95,7 +95,7 @@ Users on Reddit and GitHub have reported:
 | Intel AX210 (Lenovo ThinkPad E14 Gen 5, AMD) | macOS 26.7.3, with 0.5.3-test1: the driver runs and the checks pass; AirDrop untested, no Apple device at hand (issue #43) |
 | Intel AX210 | macOS 26.7.2, with 0.5.4-beta.2: AirDrop works both ways; Sidecar and Universal Control fail (issue #56, same cause as #42) |
 | Intel AX200 (MacBookPro16,4 SMBIOS) | macOS 26.7.2, with BTLEAdvFixup 0.9.1: a new Bluetooth LE mouse pairs and stays connected (PR #31) |
-| Intel AX210 (discrete, VT-d) | macOS 26.7.3: five nights of scheduled sleep with the full AirDrop flag set. Four woke normally, with Wi-Fi rejoining 6–10 s after the wake; on one the driver stayed unavailable until Wi-Fi was turned off and on (issue #38, open) |
+| Intel AX210 (discrete, VT-d) | macOS 26.7.3: five nights of scheduled sleep with the full AirDrop flag set. Four woke normally, with Wi-Fi rejoining 6–10 s after the wake; on one the driver stayed unavailable until Wi-Fi was turned off and on (issue #38; the cause is fixed in 0.6.0-beta.4) |
 | Intel AX200 | macOS 26.7.3, with a local build of 0.6.0-beta.1: AirDrop with a MacBook Air M1 works both ways, listener on 44 at 20 MHz, the hackintosh's Wi-Fi on 36 at 80 MHz ([PR #74](https://github.com/retropineaple/ForbiddenItlwm/pull/74)) |
 | Intel AX211 | macOS 26.7.3, with the same-channel fix (PR #47): Mac → iPhone 27–33 MB/s instead of 3–4 MB/s (PR #47) |
 | Intel AX210 (desktop, Intel NUC8i7HVK) | macOS 26.7.3, with the same-channel fix (PR #47): 19–26 MiB/s with the iPhone's network on 149 (issue #24) |
@@ -110,7 +110,7 @@ Users on Reddit and GitHub have reported:
 | Intel AX210 (AMD Ryzen 9 7945HX) | macOS 26.7.2, with 0.5.4-beta.2: AirDrop finds nothing; the iPhone sends no data to the Mac (issue #46, open) |
 | Intel AX211 (desktop) | macOS Sequoia: Wi-Fi and Bluetooth work, AirDrop and Handoff don't (issue #35, open) |
 | Intel AX210 (desktop, PCIe adapter) | macOS Sequoia 15.8.3, with 0.6.0-beta.2: AirDrop both ways and Universal Clipboard with a Mac and with an iPad. An iPhone 17 waits while the Mac is awake, because the Mac holds block ack (issue #81, open) |
-| Intel AX201 (Comet Lake) | macOS 26.7.3 build 25G416 (beta), with 0.6.0-beta.2 and `-itlawdlanybuild`: AirDrop works both ways, iPhone → Mac 9.7 MB/s. With `itlwm_he=1`, Wi-Fi drops as soon as an AirDrop starts (issue #83, open) |
+| Intel AX201 (Comet Lake) | macOS 26.7.3 build 25G416 (beta), with 0.6.0-beta.2 and `-itlawdlanybuild`: AirDrop works both ways, iPhone → Mac 9.7 MB/s. With `itlwm_he=1`, Wi-Fi dropped as soon as an AirDrop started (issue #83, fixed in 0.6.0-beta.4, not yet confirmed by the reporter) |
 | Intel Wireless-AC 9461 (CNVi, Ice Lake) | macOS 26.7.3, with 0.6.0-beta.2: Wi-Fi works, and the AirDrop listener runs on 149 and hears an Apple device; transfers not reported yet (issue #87, open) |
 
 The project hasn't verified these reports. The platforms, and which features were tried, vary between them.

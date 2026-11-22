@@ -66,7 +66,7 @@ elif [ "${OS_MAJOR:-0}" = "15" ]; then
     OS_MINOR=$(echo "$OS_VER" | cut -d. -f2)
     if echo " $SEQ_VERIFIED " | grep -q " $OS_BUILD "; then
         pass "macOS $OS_VER ($OS_BUILD): supported by the Sequoia kexts. Users report AirDrop working on 15.8.1 to 15.8.3"
-        pass "with 0.5.1-test1 or later. Use the Sequoia AirportItlwm and BTLEAdvFixup."
+        pass "with 0.5.1-test1 or later. Use the Sequoia AirportItlwm and IntelBTPatcher bundle built by this branch."
     elif [ "${OS_MINOR:-0}" = "8" ]; then
         warn "macOS $OS_VER ($OS_BUILD): expected to work with the Sequoia kexts (same 15.8 kernel family), but this build"
         warn "wasn't checked offline. The driver still checks Apple's Wi-Fi tables at boot. Please report your result."
@@ -78,7 +78,7 @@ elif [ "${OS_MAJOR:-0}" = "14" ]; then
     # The Sonoma kexts (in development): only 14.8.9 was checked offline.
     if [ "$OS_BUILD" = "23J631" ]; then
         pass "macOS $OS_VER ($OS_BUILD): supported by the Sonoma kexts. Their Wi-Fi stack was checked offline, but Sonoma"
-        pass "isn't confirmed working on hardware yet, so please report your result. Use the Sonoma AirportItlwm and BTLEAdvFixup."
+        pass "isn't confirmed working on hardware yet, so please report your result. Use the Sonoma AirportItlwm and IntelBTPatcher bundle built by this branch."
     else
         warn "macOS $OS_VER ($OS_BUILD): only Sonoma 14.8.9 (23J631) is checked. On this build the Sonoma kext keeps AirDrop off"
         warn "(normal Wi-Fi may still work). Updating to 14.8.9 is the way to get AirDrop on Sonoma."
@@ -237,7 +237,7 @@ else
             0025) pass "Intel Bluetooth 8087:$p (9260 class, Bluetooth 5)."; BT_OK=1;;
             0aaa) pass "Intel Bluetooth 8087:$p (9560/9462/9461 class, Bluetooth 5)."; BT_OK=1;;
             0a2b|0a2a|07dc|07da|0aa7)
-                  warn "Intel Bluetooth 8087:$p is Bluetooth 4.x. The LE advertising fix (BTLEAdvFixup) relies on Bluetooth 5 extended advertising."; BT_OK=1;;
+                  warn "Intel Bluetooth 8087:$p is Bluetooth 4.x. The LE advertising fix in this branch's IntelBTPatcher bundle relies on Bluetooth 5 extended advertising."; BT_OK=1;;
             0035|0036|0037)
                   warn "Intel Bluetooth 8087:$p (Wi-Fi 7 generation). Not known to work with IntelBluetoothFirmware."; BT_OK=1;;
             *)    info "Intel USB device 8087:$p (not a known Bluetooth controller ID)." ;;
@@ -246,7 +246,8 @@ else
 fi
 IBTFW=$(kext_version com.zxystd.IntelBluetoothFirmware)
 BTFIX=$(kext_version as.acidanthera.BlueToolFixup)
-BTLEADV=$(kext_version org.forbiddenitlwm.BTLEAdvFixup)
+BTLEADV=$(kext_version org.forbiddenitlwm.IntelBTPatcher)
+[ -z "$BTLEADV" ] && BTLEADV=$(kext_version org.forbiddenitlwm.BTLEAdvFixup)
 [ -z "$BTLEADV" ] && BTLEADV=$(kext_version org.itlwmawdl.BTLEAdvFixup)
 IBTPATCH=$(kext_version com.zxystd.IntelBTPatcher)
 LILU=$(kext_version as.vit9696.Lilu)
@@ -255,18 +256,18 @@ LILU=$(kext_version as.vit9696.Lilu)
 IBTUNI=$(printf '%s\n' "$KEXTS" | awk '$1 ~ /IntelBTUnified$/ { gsub(/[()]/, "", $2); print $2; exit }')
 if [ -n "$IBTUNI" ]; then
     info "IntelBTUnified $IBTUNI is loaded. It replaces IntelBluetoothFirmware, IntelBTPatcher and BlueToolFixup."
-    warn "IntelBTUnified includes IntelBTPatcher's USB hook, which BTLEAdvFixup also uses with -btleadv, and Lilu panics when two plugins hook the same function. For AirDrop, use IntelBluetoothFirmware, BlueToolFixup and BTLEAdvFixup instead."
+    warn "IntelBTUnified includes the original IntelBTPatcher USB hook, which this branch's IntelBTPatcher bundle also uses with -btleadv; Lilu panics when two plugins hook the same function. For AirDrop, use IntelBluetoothFirmware, BlueToolFixup and this branch's IntelBTPatcher bundle only."
 else
     [ -n "$IBTFW" ] && pass "IntelBluetoothFirmware $IBTFW is loaded." || warn "IntelBluetoothFirmware isn't loaded."
     [ -n "$BTFIX" ] && pass "BlueToolFixup $BTFIX is loaded." || warn "BlueToolFixup isn't loaded (needed for third-party Bluetooth on recent macOS)."
 fi
 [ -n "$LILU" ] && pass "Lilu $LILU is loaded." || warn "Lilu isn't loaded (BTLEAdvFixup is a Lilu plugin)."
-if [ -n "$BTLEADV" ]; then pass "BTLEAdvFixup $BTLEADV is loaded."; else info "BTLEAdvFixup isn't loaded. It's part of the AirDrop package."; fi
-[ -n "$IBTPATCH" ] && [ -n "$BTLEADV" ] && warn "IntelBTPatcher and BTLEAdvFixup are both loaded. The tested setup disables IntelBTPatcher, as both hook the same USB requests."
-# BTLEAdvFixup patches four places in bluetoothd. Its patterns are exact bytes from macOS 26.7.1
+if [ -n "$BTLEADV" ]; then pass "AirDrop IntelBTPatcher bundle $BTLEADV is loaded."; else info "The AirDrop IntelBTPatcher bundle isn't loaded. It's part of the AirDrop package."; fi
+[ -n "$IBTPATCH" ] && [ -n "$BTLEADV" ] && warn "The original IntelBTPatcher and this fork's renamed IntelBTPatcher bundle are both loaded. They hook the same USB requests; keep only this fork's bundle enabled."
+# The IntelBTPatcher bundle patches four places in bluetoothd. Its patterns are exact bytes from macOS 26.7.1
 # (25G241) and 26.7.3 (25G342) for the Tahoe build, and from 15.8.3 (24H241) for the Sequoia build (also matching 15.8 and 15.8.2), so
 # they only match a bluetoothd of one of those builds. This reads /usr/sbin/bluetoothd
-# (read-only) and counts each site in its original form and, when BTLEAdvFixup is already running and
+# (read-only) and counts each site in its original form and, when the IntelBTPatcher bundle is already running and
 # the page cache returns the patched page, in its patched form. Generated from
 # BTLEAdvFixup/BTLEAdvPatches.hpp; keep the two in step.
 BTD=/usr/sbin/bluetoothd
@@ -303,11 +304,11 @@ if [ -r "$BTD" ] && command -v perl >/dev/null 2>&1; then
     BT_MATCH_OK=1
     for kv in $BT_PATTERNS; do v=${kv#*=}; [ "${v%%(*}" = 1 ] || BT_MATCH_OK=0; done
     if [ -z "$BT_PATTERNS" ]; then
-        info "Couldn't read bluetoothd to check BTLEAdvFixup's patterns."
+        info "Couldn't read bluetoothd to check the IntelBTPatcher bundle's patterns."
     elif [ "$BT_MATCH_OK" = 1 ]; then
-        pass "BTLEAdvFixup's patterns each match this macOS's bluetoothd once ($BT_PATTERNS)."
+        pass "IntelBTPatcher bundle patterns each match this macOS's bluetoothd once ($BT_PATTERNS)."
     else
-        warn "BTLEAdvFixup's patterns don't all match this bluetoothd ($BT_PATTERNS). Each should be 1."
+        warn "IntelBTPatcher bundle patterns don't all match this bluetoothd ($BT_PATTERNS). Each should be 1."
         warn "Without them the Mac can't advertise AirDrop over Bluetooth, so iPhones won't list it. Please report this build."
     fi
 fi

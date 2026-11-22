@@ -95,7 +95,8 @@ public:
     IOReturn setBTCOEX_EXT_PROFILE(apple80211_btcoex_ext_profile*) override { return kIOReturnUnsupported; }
     IOReturn setDEVICE_ORIENTATION(apple80211_device_orientation*) override { return kIOReturnUnsupported; }
     IOReturn setACCESSORY_STATE(apple80211_device_accessory_info*) override { return kIOReturnUnsupported; }
-    IOReturn setOS_ELIGIBILITY(apple80211_os_eligibility*) override { return kIOReturnUnsupported; }
+    // Acknowledged only: the payload is opaque here and never read (#85, from ann0see's diff).
+    IOReturn setOS_ELIGIBILITY(apple80211_os_eligibility*) override { return kIOReturnSuccess; }
     IOReturn setTX_MODE_CONFIG(apple80211_tx_mode_config*) override { return kIOReturnUnsupported; }
     IOReturn setMITIGATE_INTERFERENCE(apple80211_mitigate_interference*) override { return kIOReturnUnsupported; }
     IOReturn setMacAddress(mloAddrArray &) override;

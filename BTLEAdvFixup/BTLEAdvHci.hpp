@@ -112,6 +112,40 @@ inline Action onCommand(State &s, const uint8_t *hci, size_t length, bool extend
     }
     return a;
 }
+// Read-only record of how bluetoothd uses the controller's resolving list, for Instant Hotspot: its LE connection to
+// the iPhone's identity (public) address never completed on 2026-11-20 (6 s of connection scan, then status 702).
+// That needs the controller to resolve the iPhone's private address. Nothing is changed here, only counted.
+enum : uint16_t {
+    kOpLeCreateConnection = 0x200d, kOpLeAddResolving = 0x2027, kOpLeRemoveResolving = 0x2028,
+    kOpLeClearResolving = 0x2029, kOpLeAddressResolution = 0x202d, kOpLeExtCreateConnection = 0x2043,
+};
+struct PrivacyStats {
+    uint32_t resolvingAdds, resolvingRemoves, resolvingClears, resolutionOn, resolutionOff;
+    uint32_t connects[4];   // LE (extended) create connection by peer address type: public, random, public id, random id
+    uint32_t connectsWithoutResolution;   // to an identity address while resolution was never turned on
+    bool resolutionEnabled;
+};
+inline void notePrivacy(PrivacyStats &p, const uint8_t *hci, size_t length) {
+    if (!hci || length < 3) return;
+    const uint16_t op = uint16_t(hci[0] | hci[1] << 8);
+    int peerType = -1;
+    switch (op) {
+    case kOpReset: p.resolutionEnabled = false; break;
+    case kOpLeAddResolving: ++p.resolvingAdds; break;
+    case kOpLeRemoveResolving: ++p.resolvingRemoves; break;
+    case kOpLeClearResolving: ++p.resolvingClears; break;
+    case kOpLeAddressResolution:
+        if (length >= 4) { p.resolutionEnabled = hci[3] == 1; ++(hci[3] == 1 ? p.resolutionOn : p.resolutionOff); }
+        break;
+    case kOpLeCreateConnection: if (length >= 9) peerType = hci[8]; break;      // after interval, window, filter
+    case kOpLeExtCreateConnection: if (length >= 6) peerType = hci[5]; break;   // after filter, own type
+    default: break;
+    }
+    if (peerType >= 0 && peerType < 4) {
+        ++p.connects[peerType];
+        if (!p.resolutionEnabled && p.resolvingAdds) ++p.connectsWithoutResolution;
+    }
+}
 // Intel Bluetooth controllers never send an LE Data Length Change event on Tahoe, so bluetoothd
 // stays at LE_READY_WAIT_FOR_LENGTH after the link encrypts and a new BLE HID device (a mouse, a
 // keyboard) never binds: "No database exists". Already bonded devices skip GATT discovery, which

@@ -286,6 +286,7 @@ static void wclScanPublish(IOService *service, const char *last)
     if (last)
         service->setProperty("ItlwmScanLast", last);
 }
+static uint32_t wclScanPreempts, wclFastLaneRequests;
 
 IOReturn AirportItlwmSkywalkInterface::beginWCLScan(apple80211ScanRequest *request)
 {
@@ -312,7 +313,12 @@ IOReturn AirportItlwmSkywalkInterface::startWCLScan(apple80211ScanRequest *reque
         ++wclScanStats.notReady;
         return kIOReturnNotReady;
     }
-    if (scanPending || joinPending || (ic->ic_flags & IEEE80211_F_BGSCAN)) {
+    // A new request while our own unassociated scan runs replaces it, as AppleBCMWLANScanAdapter does
+    // ("Event scan is in progress, aborting...", "scan aborted by another scan"). Refusing it (tmpErr)
+    // broke Instant Hotspot: airportd's directed scan for the phone's network was refused ten times in a
+    // row while auto-join's 38-channel scan ran, and the join gave up (2026-11-13 10:36).
+    const bool preempt = scanPending && !joinPending && ic->ic_state == IEEE80211_S_SCAN;
+    if (!preempt && (scanPending || joinPending || (ic->ic_flags & IEEE80211_F_BGSCAN))) {
         ++(scanPending ? wclScanStats.busyPending : joinPending ? wclScanStats.busyJoin : wclScanStats.busyBgscan);
         return kIOReturnBusy;
     }
@@ -331,10 +337,15 @@ IOReturn AirportItlwmSkywalkInterface::startWCLScan(apple80211ScanRequest *reque
             return kIOReturnUnsupported;
         }
     }
+    if (preempt) {
+        finishWCLScan(kIOReturnAborted);
+        instance->setProperty("ItlwmWCLScanPreempts", ++wclScanPreempts, 32);
+    }
     scanPending = true;
     scanCompleted = false;
+    // The pass already under way may have gone past channels the new request needs: it completes on the next.
     scanSkipCompletion = ic->ic_state == IEEE80211_S_SCAN &&
-        ((scan.type != 2 && scan.ssidLength != 0) ||
+        (preempt || (scan.type != 2 && scan.ssidLength != 0) ||
          ic->ic_wcl_scan_ssid_length != 0 || ic->ic_des_esslen != 0);
     ic->ic_wcl_scan_requested = true;
     ic->ic_wcl_scan_active = scan.type != 2;
@@ -1057,7 +1068,11 @@ IOReturn AirportItlwmSkywalkInterface::getWCL_EXTENDED_BSS_INFO(apple80211_exten
 IOReturn AirportItlwmSkywalkInterface::copyWCLExtendedBss(void *data)
 {
     ieee80211com *ic = fHalService->get80211Controller();
-    if (!data || !ic->ic_bss || ic->ic_state != IEEE80211_S_RUN)
+    // WCL's setCurrentBSS reads this right after association, before the 4-way handshake has put net80211
+    // in RUN on some joins: "Fail to get EXTENDED_BSS_INFO" then "Update Bss fail" dropped the link
+    // (2026-11-11 15:48, 11-12 19:51 and 21:17, 11-13 10:11). AppleBCMWLANNetAdapter::getExtendedBssInfo
+    // only fails if the firmware can't give the rates; the joined node has them from ASSOC on.
+    if (!data || !ic->ic_bss || (ic->ic_state != IEEE80211_S_RUN && ic->ic_state != IEEE80211_S_ASSOC))
         return kIOReturnNotReady;
     static_assert(sizeof(apple80211_rate_set_data) == 0xbc, "Extended BSS rates size");
     static_assert(sizeof(apple80211_mcs_index_set_data) == 0x10, "Extended BSS MCS size");
@@ -1067,12 +1082,22 @@ IOReturn AirportItlwmSkywalkInterface::copyWCLExtendedBss(void *data)
 #else
     bzero(bytes, 0x214);
 #endif
-    IOReturn status = getRATE_SET(reinterpret_cast<apple80211_rate_set_data *>(bytes));
-    if (status)
-        return status;
-    status = getMCS_INDEX_SET(reinterpret_cast<apple80211_mcs_index_set_data *>(bytes + 0xbc));
-    if (status)
-        return status;
+    {
+        auto *rates = reinterpret_cast<apple80211_rate_set_data *>(bytes);
+        rates->version = APPLE80211_VERSION;
+        rates->num_rates = ic->ic_bss->ni_rates.rs_nrates;
+        const size_t count = min(size_t(ic->ic_bss->ni_rates.rs_nrates), ARRAY_SIZE(rates->rates));
+        for (size_t i = 0; i < count; ++i) {
+            rates->rates[i].version = APPLE80211_VERSION;
+            rates->rates[i].rate = ic->ic_bss->ni_rates.rs_rates[i];
+            rates->rates[i].flags = 0;
+        }
+        auto *mcs = reinterpret_cast<apple80211_mcs_index_set_data *>(bytes + 0xbc);
+        mcs->version = APPLE80211_VERSION;
+        const size_t mcsCount = min(ARRAY_SIZE(ic->ic_bss->ni_rxmcs), ARRAY_SIZE(mcs->mcs_set_map));
+        for (size_t i = 0; i < mcsCount; ++i)
+            mcs->mcs_set_map[i] = ic->ic_bss->ni_rxmcs[i];
+    }
     apple80211_vht_mcs_index_set_data vht = {};
     vht.version = APPLE80211_VERSION;
     vht.mcs_map = 0xffff;
@@ -1103,13 +1128,14 @@ IOReturn AirportItlwmSkywalkInterface::setWCL_UPDATE_FAST_LANE(apple80211_fastla
 {
     if (!data)
         return kIOReturnBadArgument;
-    /*
-     * Cisco/Apple Fast Lane: macOS asks the driver to enable it right after
-     * the association completes when the AP advertises it (e.g. Aironet 3800).
-     * This adapter has no Fast Lane QoS marking, but returning an error here
-     * makes WCL treat it as "Update Bss fail" and tear the link down ~0.4 s
-     * after LINK_STATE_IS_UP. Accept the request and ignore it.
-     */
+    // AppleBCMWLANInfraProtocol::setWCL_UPDATE_FAST_LANE always succeeds: it records whether the AP offers
+    // Fastlane (QoS) and, when both bytes are set, overrides the firmware's admission control. WCL's
+    // setCurrentBSS asks for it with the AP's own Fastlane flag right after association and leaves the
+    // network if the driver refuses ("Fail to set fast lane", then "Update Bss fail"): every WPA2/WPA3 join
+    // to such an AP failed (2026-11-13). There is no admission control to override here.
+    const auto bytes = reinterpret_cast<const uint8_t *>(data);
+    if (bytes[0] || bytes[1])
+        instance->setProperty("ItlwmWCLFastLaneRequests", ++wclFastLaneRequests, 32);
     return kIOReturnSuccess;
 }
 

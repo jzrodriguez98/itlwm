@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Build BTLEAdvFixup.kext, the Lilu plugin that lets macOS start Bluetooth LE advertising on Intel controllers.
+"""Build IntelBTPatcher.kext (the renamed BTLEAdvFixup implementation), the Lilu plugin that lets macOS start Bluetooth LE advertising on Intel controllers.
 
 One build per macOS version, because the bluetoothd patterns are per build:
 --target tahoe (macOS 26.7.1, default), --target sequoia (macOS 15.8.3) or --target sonoma (macOS 14.8.9)."""
-import argparse,hashlib,plistlib,re,subprocess
+import argparse,hashlib,os,plistlib,re,subprocess
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
-NAME='BTLEAdvFixup';VERSION='0.9.3';IDENT='org.forbiddenitlwm.'+NAME
+NAME='IntelBTPatcher';VERSION='0.9.4';IDENT='org.forbiddenitlwm.'+NAME
 def run(c): subprocess.run([str(x) for x in c],check=True)
 def main():
     p=argparse.ArgumentParser();p.add_argument('--out',type=Path,required=True)
@@ -18,7 +18,11 @@ def main():
     for s in (ROOT/'BTLEAdvFixup/kern_start.cpp',lilu/'Library/plugin_start.cpp'):
         o=a.out/(s.stem+'.o');run(base+['-DPRODUCT_NAME='+NAME,'-DMODULE_VERSION='+VERSION,'-c',s,'-o',o]);objs.append(o)
     exe=bundle/'MacOS'/NAME
-    run(['xcrun','ld','-arch','x86_64','-kext','-undefined','dynamic_lookup','-no_fixup_chains','-macos_version_min','10.6','-o',exe,*objs,sdk/'Library/x86_64/libkmod.a'])
+    # The same source gives the same kext anywhere: ld's UUID otherwise mixes in the objects' times
+    # (ZERO_AR_DATE) and their folder (-oso_prefix).
+    subprocess.run([str(x) for x in ['xcrun','ld','-arch','x86_64','-kext','-undefined','dynamic_lookup','-no_fixup_chains','-macos_version_min','10.6',
+                    '-oso_prefix',str(a.out.resolve())+'/','-o',exe,*objs,sdk/'Library/x86_64/libkmod.a']],
+                   check=True,env=dict(os.environ,ZERO_AR_DATE='1'))
     run(['xcrun','strip','-S',exe])
     libs={x:'10.0.0' for x in ['com.apple.kpi.bsd','com.apple.kpi.dsep','com.apple.kpi.iokit','com.apple.kpi.libkern','com.apple.kpi.mach','com.apple.kpi.unsupported']}
     libs['as.vit9696.Lilu']='1.4.7'

@@ -12,10 +12,10 @@ R=Path(__file__).resolve().parents[1]
 NAME='AirportItlwm';ID='com.zxystd.AirportItlwm';VER='0.6.0'
 # Per macOS target: the IO80211 header set, the build marker, and which version header directory stays off the quote path.
 TARGETS={
-    'tahoe':dict(io80211='__MAC_26_0',marker='forbidden-0.6.0-beta.3',skip=('macOS15','macOS14')),
-    'sequoia':dict(io80211='__MAC_15_2',marker='forbidden-0.6.0-beta.3-sequoia',skip=('macOS15','macOS26','macOS14')),
+    'tahoe':dict(io80211='__MAC_26_0',marker='forbidden-0.6.0-beta.4',skip=('macOS15','macOS14')),
+    'sequoia':dict(io80211='__MAC_15_2',marker='forbidden-0.6.0-beta.4-sequoia',skip=('macOS15','macOS26','macOS14')),
     # Sonoma 14.4 and later: IO80211FamilyV2 without WCL, as upstream's AirportItlwm-Sonoma14.4 target.
-    'sonoma':dict(io80211='__MAC_14_4',marker='forbidden-0.6.0-beta.3-sonoma',skip=('macOS15','macOS26','macOS14'),wcl=False),
+    'sonoma':dict(io80211='__MAC_14_4',marker='forbidden-0.6.0-beta.4-sonoma',skip=('macOS15','macOS26','macOS14'),wcl=False),
 }
 # Warnings for ForbiddenItlwm/ sources. The disabled ones only fire in Apple's private headers.
 PROJECT_WARNINGS=['-Wall','-Wextra','-Wsign-compare','-Wuninitialized','-Wsometimes-uninitialized','-Werror=sign-compare','-Werror=uninitialized','-Werror=sometimes-uninitialized',

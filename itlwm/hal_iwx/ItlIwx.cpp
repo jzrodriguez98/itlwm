@@ -160,6 +160,9 @@ static uint32_t awdlCoexCountryLastStatus, awdlCoexCountryAnswerSeconds;
 static uint16_t awdlCoexCountryNotice, awdlCoexCountryAnswered;
 static uint8_t awdlCoexCountrySource, awdlCoexCountrySourceAnswered;
 static bool awdlCoexCountryPending, awdlCoexCountryLearned;
+// GET_CURRENT reads while no country is learned (see awdlCoexTxTask): count, finds, last reply (mcc << 8 | source).
+static uint64_t awdlCoexCountryPollUS;
+static uint32_t awdlCoexCountryPolls, awdlCoexCountryPollFinds, awdlCoexCountryPollLast;
 // Bits 0-3: a beacon hint on 149, 153, 157, 161; bit 4: on 6; bits 8-11: on 36, 40, 44, 48
 // (ITLAWDLCoexBeaconHints).
 static uint32_t awdlCoexBeaconHints;
@@ -6745,6 +6748,9 @@ static void awdlCoexPublish()
         root->setProperty("ITLAWDLCoexCountryAnswers", awdlCoexCountryAnswers, 32);
         root->setProperty("ITLAWDLCoexCountryLastStatus", awdlCoexCountryLastStatus, 32);
         root->setProperty("ITLAWDLCoexCountryLearned", awdlCoexCountryLearned);
+        root->setProperty("ITLAWDLCoexCountryPolls", awdlCoexCountryPolls, 32);
+        root->setProperty("ITLAWDLCoexCountryPollFinds", awdlCoexCountryPollFinds, 32);
+        root->setProperty("ITLAWDLCoexCountryPollLast", awdlCoexCountryPollLast, 32);
         root->setProperty("ITLAWDLCoexBeaconHints", awdlCoexBeaconHints, 32);
         root->setProperty("ITLAWDLCoexOverlap", awdlCoexOverlapState, 8);
         root->setProperty("ITLAWDLCoexPeer5GHz", awdlCoexPeer5G, 32);
@@ -7452,6 +7458,39 @@ awdlCoexTxTask(void *arg)
     struct ieee80211com *ic = &sc->sc_ic;
     const bool running = (IC2IFP(ic)->if_flags & IFF_RUNNING) && ic->ic_state == IEEE80211_S_RUN &&
         ic->ic_opmode == IEEE80211_M_STA && !(sc->sc_flags & (IWX_FLAG_HW_ERR | IWX_FLAG_SHUTDOWN | IWX_FLAG_RFKILL));
+    // The firmware's notice is the only thing that moves the listener off channel 6, and it may never come: none in
+    // the 2 h after the 2026-11-21 10:21 boot (ITLAWDLCoexCountryNotices 0), so AWDL stayed on 6 at 20 MHz and
+    // macOS called the phone "discovered on 2.4GHz only ... outside bubble". Linux doesn't wait for it: it reads
+    // the firmware's current domain ("ZZ" with MCC_SOURCE_GET_CURRENT, iwl_mvm_get_current_regdomain). The same
+    // read here, every 30 s while associated and no country is learned; it changes nothing by itself. A country the
+    // firmware learned from Wi-Fi then goes through the notice's own path, as if its notice had arrived.
+    if (running && !awdlCoexCountryLearned && !awdlCoexCountryPending && awdlCoexAdded &&
+        awdlCoexGeneration == sc->sc_generation) {
+        const uint64_t pollNow = awdlUptimeUS();
+        if (!awdlCoexCountryPollUS || pollNow - awdlCoexCountryPollUS >= 30000000ULL) {
+            awdlCoexCountryPollUS = pollNow;
+            ++awdlCoexCountryPolls;
+            const int pollGen = sc->sc_generation;
+            ItlAWDL::MccSample current{};
+            if (that->iwx_mcc_request(sc, uint16_t('Z' << 8 | 'Z'), IWX_MCC_SOURCE_GET_CURRENT, &current, false) == 0 &&
+                pollGen == sc->sc_generation) {
+                awdlCoexCountryPollLast = uint32_t(current.mcc) << 8 | current.source;
+                if (ItlAWDL::countryNoticeUsable(current.mcc, current.source) && !awdlCoexCountryPending) {
+                    if (awdlCoexCountryGen != sc->sc_generation) {
+                        awdlCoexCountryGen = sc->sc_generation;
+                        awdlCoexCountryAnswered = 0;
+                        awdlCoexCountrySourceAnswered = 0;
+                        awdlCoexCountryRetryUS = 0;
+                    }
+                    awdlCoexCountryNotice = current.mcc;
+                    awdlCoexCountrySource = current.source;
+                    awdlCoexCountryPending = true;
+                    ++awdlCoexCountryPollFinds;
+                }
+            }
+            awdlCoexPublish();
+        }
+    }
     if (running && awdlCoexCountryPending && awdlCoexCountryGen == sc->sc_generation &&
         (!awdlCoexCountryRetryUS || awdlUptimeUS() >= awdlCoexCountryRetryUS) &&
         (!ItlAWDL::countryNoticeUsable(awdlCoexCountryNotice, awdlCoexCountrySource) ||
@@ -8535,7 +8574,7 @@ awdlRxTask(void *arg)
                 rateResults->release();
             }
         root->setProperty("ITLAWDLFixedChannel", awdlFixedChannel, 32);
-        root->setProperty("ITLAWDLBtCoexMode", ItlAWDL::btCoexModeFor(awdlBtCoexRequest, IWX_BT_COEX_WIFI), 32);
+        root->setProperty("ITLAWDLBtCoexMode", ItlAWDL::btCoexModeFor(awdlBtCoexRequest, IWX_BT_COEX_NW), 32);
         root->setProperty("ITLAWDLRequestedCountry", awdlCountry);
         root->setProperty("ITLAWDLCountryScans", awdlCountryScans, 32);
         root->setProperty("ITLAWDLBackgroundScans", awdlBackgroundScans, 32);
@@ -14722,6 +14761,10 @@ iwx_rs_init(struct iwx_softc *sc, struct iwx_node *in, bool update)
     if (awdlBaTlc) {
         // The peer has no node here. High HT rates only: it leaves the channel often, and rate
         // control would otherwise take that for a bad link and drop far down.
+        // Start from an empty rate table: the HE and VHT helpers above filled it from the BSS node,
+        // including the 160 MHz entries of a 160 MHz router, which the firmware rejects for this
+        // 80 MHz-or-narrower peer with a UMAC assert (#83).
+        memset(cfg_cmd.ht_rates, 0, sizeof(cfg_cmd.ht_rates));
         cfg_cmd.mode = IWX_TLC_MNG_MODE_HT;
         cfg_cmd.ht_rates[IWX_TLC_NSS_1][IWX_TLC_MCS_PER_BW_80] = htole16(0xf0);
         cfg_cmd.ht_rates[IWX_TLC_NSS_2][IWX_TLC_MCS_PER_BW_80] = htole16(0xf0);
@@ -16992,10 +17035,25 @@ iwx_send_bt_init_conf(struct iwx_softc *sc)
     XYLog("%s\n", __FUNCTION__);
     struct iwx_bt_coex_cmd bt_cmd;
     
-    // Monitor mode keeps Wi-Fi busy on 2.4 GHz, so an AWDL test boot may need a different
-    // balance with Bluetooth, which shares the radio. Default behaviour is unchanged.
-    bt_cmd.mode = htole32(ItlAWDL::btCoexModeFor(awdlBtCoexRequest, IWX_BT_COEX_WIFI));
-    bt_cmd.enabled_modules = 0;
+    // The default was IWX_BT_COEX_WIFI with no modules (OpenBSD's choice), which starves Bluetooth on a shared
+    // antenna: on an AX201, A2DP queue overruns and Bluetooth audio dropouts whenever the station was busy.
+    // Linux iwlwifi (mvm/coex.c, iwl_mvm_send_bt_init_conf) sends BT_COEX_NW with SYNC2SCO and HIGH_BAND_RET,
+    // plus MPLUT, the firmware's multi-priority table for Bluetooth traffic, whenever the firmware declares
+    // IWL_UCODE_TLV_CAPA_BT_MPLUT_SUPPORT (iwl_mvm_is_mplut_supported; IWL_MVM_BT_COEX_MPLUT is 1). The same here.
+    // itlawdlbtcoex=N still forces a mode for tests; any mode other than NW gets no modules.
+    const uint32_t btMode = ItlAWDL::btCoexModeFor(awdlBtCoexRequest, IWX_BT_COEX_NW);
+    bt_cmd.mode = htole32(btMode);
+    uint32_t btModules = 0;
+    if (btMode == IWX_BT_COEX_NW) {
+        btModules = IWX_BT_COEX_SYNC2SCO_ENABLED | IWX_BT_COEX_HIGH_BAND_RET;
+        if (isset(sc->sc_enabled_capa, IWX_UCODE_TLV_CAPA_BT_MPLUT_SUPPORT))
+            btModules |= IWX_BT_COEX_MPLUT_ENABLED;
+    }
+    bt_cmd.enabled_modules = htole32(btModules);
+    // Published here, at every firmware start: the AWDL summary that also shows the mode runs only in monitor mode.
+    auto *root = IORegistryEntry::getRegistryRoot();
+    root->setProperty("ITLAWDLBtCoexMode", btMode, 32);
+    root->setProperty("ITLAWDLBtCoexModules", btModules, 32);
     
     return iwx_send_cmd_pdu(sc, IWX_BT_CONFIG, 0, sizeof(bt_cmd),
                             &bt_cmd);

@@ -12,27 +12,62 @@
 #include <IOKit/IOBufferMemoryDescriptor.h>
 #include <IOKit/usb/IOUSBHostDevice.h>
 #include <kern/clock.h>
+#include <kern/thread_call.h>
 #include <mach/mach_time.h>
+#include <sys/vnode.h>
 #include "BTLEAdvPatches.hpp"
 #include "BTLEAdvHci.hpp"
+#include "BTLEAdvVerify.hpp"
 
 // Patches bluetoothd's pages as they're validated, the same way BlueToolFixup does.
 // Lilu's onProcLoad route was tried first and didn't apply to this process.
 static mach_vm_address_t orig_cs_validate {};
 static bool patchScanning {};
 
+// The original bytes of every bluetoothd page a kext patched, for APFS's integrity check (BTLEAdvVerify.hpp, #62).
+// This hook sees BlueToolFixup's patches too when it runs outside BlueToolFixup's, that is when BTLEAdvFixup loads
+// after BlueToolFixup. pagesLock, a mutex, guards patchedPages, pageScratch and the bluetoothd vnode; it's held
+// across the validation of one bluetoothd page, never across an allocation, a registry write or the check itself.
+static BTLEAdv::PatchedPages *patchedPages {};
+static uint8_t *pageScratch {};
+static IOLock *pagesLock {};
+static vnode_t bluetoothdVnode {};
+static uint32_t bluetoothdVid {};
+static thread_call_t publishCall {};
+
 static void patched_cs_validate_page(vnode_t vp, memory_object_t pager, memory_object_offset_t page_offset,
                                      const void *data, int *validated_p, int *tainted_p, int *nx_p) {
     char path[PATH_MAX];
     int pathlen = PATH_MAX;
-    FunctionCast(patched_cs_validate_page, orig_cs_validate)(vp, pager, page_offset, data, validated_p, tainted_p, nx_p);
-    if (vn_getpath(vp, path, &pathlen) != 0 || LIKELY(strcmp(path, "/usr/sbin/bluetoothd") != 0))
+    if (vn_getpath(vp, path, &pathlen) != 0 || LIKELY(strcmp(path, "/usr/sbin/bluetoothd") != 0)) {
+        FunctionCast(patched_cs_validate_page, orig_cs_validate)(vp, pager, page_offset, data, validated_p, tainted_p, nx_p);
         return;
+    }
+    // The page as it came from disk, before any hook in the chain changes it.
+    const bool keep = data && patchedPages && pageScratch && pagesLock;
+    if (keep) {
+        IOLockLock(pagesLock);
+        memcpy(pageScratch, data, PAGE_SIZE);
+    }
+    FunctionCast(patched_cs_validate_page, orig_cs_validate)(vp, pager, page_offset, data, validated_p, tainted_p, nx_p);
     // Each set only matches its own bluetoothd build; on any other build nothing changes.
     for (const auto &patch : BTLEAdv::kPatches)
         if (!patch.scanningOnly || patchScanning)
             KernelPatcher::findAndReplace(const_cast<void *>(data), PAGE_SIZE, patch.find, patch.size,
                                           patch.replace, patch.size);
+    if (!keep)
+        return;
+    // A new vnode for the file has its own pages: the old records don't apply to it.
+    const uint32_t vid = vnode_vid(vp);
+    if (bluetoothdVnode != vp || bluetoothdVid != vid) {
+        patchedPages->count = 0;
+        bluetoothdVnode = vp;
+        bluetoothdVid = vid;
+    }
+    const bool added = BTLEAdv::recordPatchedPage(*patchedPages, page_offset, pageScratch, static_cast<const uint8_t *>(data));
+    IOLockUnlock(pagesLock);
+    if (added && publishCall)
+        thread_call_enter(publishCall);
 }
 
 // bluetoothd talks to the controller over USB control requests. Commands it doesn't send in
@@ -78,8 +113,75 @@ static IOReturn patched_device_request(void *that, IOService *provider, Standard
 
 // Evidence for tests, in the I/O Registry root. Set only on rare events, in thread context.
 static uint32_t extraCommands {}, setAddresses {}, extraFailures {};
+static BTLEAdv::PrivacyStats privacyStats {};   // under hciLock
+static bool privacyChanged {};
 static void noteHook(const char *key, uint32_t value) {
     IORegistryEntry::getRegistryRoot()->setProperty(key, value, 32);
+}
+
+// APFS's check of file data read from disk (#62). For bluetoothd's file, when the block being checked holds a
+// page as the patches left it, the check gets a copy with that page's original bytes; the pages themselves keep
+// their patches. Every other file, and every other kind of call, goes straight through.
+// decmpfs calls the filesystem's function through the vnode's operation table (the kernel inlines VNOP_VERIFY
+// there), so the hook is on APFS's apfs_vnop_verify, which takes the arguments as one struct.
+struct VerifyArgs {
+    void *desc;
+    vnode_t vp;
+    off_t foffset;
+    uint8_t *buf;
+    size_t bufsize;
+    size_t *verifyBlockSize;
+    void **verifyContext;
+    int flags;
+    vfs_context_t context;
+#if !defined(BTLEADV_SEQUOIA) && !defined(BTLEADV_SONOMA)
+    void *verifyKind;   // from macOS 26
+#endif
+};
+static mach_vm_address_t orig_apfs_verify {};
+static uint32_t verifyRescues {}, verifyRescueFailures {};
+static int patched_apfs_verify(VerifyArgs *args) {
+    // Only checks of file data: no flags, or the filesystem's own context (VNODE_VERIFY_WITH_CONTEXT).
+    if (LIKELY(!args || args->vp != bluetoothdVnode) || !args->buf || !args->bufsize || args->foffset < 0 ||
+        (args->flags & ~2) || !pagesLock)
+        return FunctionCast(patched_apfs_verify, orig_apfs_verify)(args);
+    IOLockLock(pagesLock);
+    const bool needed = args->vp == bluetoothdVnode && vnode_vid(args->vp) == bluetoothdVid &&
+                        BTLEAdv::holdsPatchedBytes(*patchedPages, uint64_t(args->foffset), args->buf, args->bufsize);
+    IOLockUnlock(pagesLock);
+    if (!needed)
+        return FunctionCast(patched_apfs_verify, orig_apfs_verify)(args);
+    uint8_t *copy = static_cast<uint8_t *>(IOMalloc(args->bufsize));
+    int error;
+    if (copy) {
+        memcpy(copy, args->buf, args->bufsize);
+        IOLockLock(pagesLock);
+        BTLEAdv::restoreOriginalBytes(*patchedPages, uint64_t(args->foffset), copy, args->bufsize);
+        IOLockUnlock(pagesLock);
+        VerifyArgs copied = *args;
+        copied.buf = copy;
+        error = FunctionCast(patched_apfs_verify, orig_apfs_verify)(&copied);
+        IOFree(copy, args->bufsize);
+    } else {
+        error = FunctionCast(patched_apfs_verify, orig_apfs_verify)(args);
+    }
+    bumpCounter(copy && !error ? verifyRescues : verifyRescueFailures);
+    if (publishCall)
+        thread_call_enter(publishCall);
+    return error;
+}
+
+// Registry keys for the above, written from a thread call: the hooks run where a registry write isn't safe.
+static void publishVerify(thread_call_param_t, thread_call_param_t) {
+    uint32_t count = 0, full = 0;
+    IOLockLock(pagesLock);
+    count = uint32_t(patchedPages->count);
+    full = patchedPages->full;
+    IOLockUnlock(pagesLock);
+    noteHook("BTLEAdvPatchedPages", count);
+    noteHook("BTLEAdvPatchedPagesFull", full);
+    noteHook("BTLEAdvVerifyRescues", __atomic_load_n(&verifyRescues, __ATOMIC_RELAXED));
+    noteHook("BTLEAdvVerifyRescueFailures", __atomic_load_n(&verifyRescueFailures, __ATOMIC_RELAXED));
 }
 
 // Intel's vendor ID is also on hubs and other devices. Without the controller's product name, it
@@ -156,6 +258,8 @@ static IOReturn patched_device_request(void *that, IOService *provider, Standard
             }
         }
         legacyScanAddress = BTLEAdv::wantsLegacyScanAddress(hciState, hci, hciLength);
+        BTLEAdv::notePrivacy(privacyStats, hci, hciLength);
+        privacyChanged = true;
         action = BTLEAdv::onCommand(hciState, hci, hciLength, patchScanning);
         IOLockUnlock(hciLock);
         if (lengthLock) {
@@ -190,6 +294,24 @@ static IOReturn patched_device_request(void *that, IOService *provider, Standard
         noteHook("BTLEAdvFirstRequest", request.bRequest);
     }
     const IOReturn result = FunctionCast(patched_device_request, orig_device_request)(that, provider, request, data, descriptor, length, completion, timeout);
+    if (hciLength >= 3 && privacyChanged) {
+        const uint16_t op = uint16_t(hci[0] | hci[1] << 8);
+        if (op == BTLEAdv::kOpLeAddResolving || op == BTLEAdv::kOpLeAddressResolution ||
+            op == BTLEAdv::kOpLeCreateConnection || op == BTLEAdv::kOpLeExtCreateConnection) {
+            IOLockLock(hciLock);
+            const BTLEAdv::PrivacyStats p = privacyStats;
+            privacyChanged = false;
+            IOLockUnlock(hciLock);
+            noteHook("BTLEAdvResolvingAdds", p.resolvingAdds);
+            noteHook("BTLEAdvResolutionOn", p.resolutionOn);
+            noteHook("BTLEAdvResolutionOff", p.resolutionOff);
+            noteHook("BTLEAdvResolutionEnabled", p.resolutionEnabled ? 1 : 0);
+            noteHook("BTLEAdvConnectsPublic", p.connects[0]);
+            noteHook("BTLEAdvConnectsRandom", p.connects[1]);
+            noteHook("BTLEAdvConnectsIdentity", p.connects[2] + p.connects[3]);
+            noteHook("BTLEAdvConnectsNoResolution", p.connectsWithoutResolution);
+        }
+    }
     if (action.sendSetAddress || action.sendEventMask) {
         // Only after the command it depends on was accepted. A set address that didn't go out is
         // forgotten, so the next parameters command for that set tries again.
@@ -357,6 +479,8 @@ static IOReturn patched_pipe_io(void *that, IOMemoryDescriptor *dataBuffer, uint
 
 static const char *usbHostPaths[] {"/System/Library/Extensions/IOUSBHostFamily.kext/Contents/MacOS/IOUSBHostFamily"};
 static KernelPatcher::KextInfo usbHostInfo {"com.apple.iokit.IOUSBHostFamily", usbHostPaths, 1, {true}, {}, KernelPatcher::KextInfo::Unloaded};
+static const char *apfsPaths[] {"/System/Library/Extensions/apfs.kext/Contents/MacOS/apfs"};
+static KernelPatcher::KextInfo apfsInfo {"com.apple.filesystems.apfs", apfsPaths, 1, {true}, {}, KernelPatcher::KextInfo::Unloaded};
 
 static const char *bootargOff[] = {"-btleadvoff"};
 static const char *bootargDebug[] = {"-btleadvdbg"};
@@ -387,11 +511,45 @@ PluginConfiguration ADDPR(config) {
             return;
         // Advertising alone, to compare with both.
         patchScanning = !checkKernelArgument("-btlenoscan");
+        // For the integrity check of bluetoothd's patched pages (#62). Without any of these it stays off and the
+        // pages are patched as before.
+        pagesLock = IOLockAlloc();
+        patchedPages = static_cast<BTLEAdv::PatchedPages *>(IOMalloc(sizeof(BTLEAdv::PatchedPages)));
+        pageScratch = static_cast<uint8_t *>(IOMalloc(PAGE_SIZE));
+        if (patchedPages)
+            memset(patchedPages, 0, sizeof(BTLEAdv::PatchedPages));
+        if (pagesLock && patchedPages && pageScratch)
+            publishCall = thread_call_allocate(publishVerify, nullptr);
+        if (!pagesLock || !patchedPages || !pageScratch || !publishCall) {
+            SYSLOG("btleadv", "no memory for the integrity check fix, it stays off");
+            if (patchedPages)
+                IOFree(patchedPages, sizeof(BTLEAdv::PatchedPages));
+            if (pageScratch)
+                IOFree(pageScratch, PAGE_SIZE);
+            if (pagesLock)
+                IOLockFree(pagesLock);
+            patchedPages = nullptr;
+            pageScratch = nullptr;
+            pagesLock = nullptr;
+        }
         lilu.onPatcherLoadForce([](void *, KernelPatcher &patcher) {
             KernelPatcher::RouteRequest route("_cs_validate_page", patched_cs_validate_page, orig_cs_validate);
             if (!patcher.routeMultipleLong(KernelPatcher::KernelID, &route, 1))
                 SYSLOG("btleadv", "failed to route cs validation");
         });
+        // Routed on its own: if it fails, bluetoothd is still patched, as before.
+        if (pagesLock)
+            lilu.onKextLoadForce(&apfsInfo, 1, [](void *, KernelPatcher &patcher, size_t index, mach_vm_address_t address, size_t size) {
+                if (index != apfsInfo.loadIndex)
+                    return;
+                KernelPatcher::RouteRequest route("_apfs_vnop_verify", patched_apfs_verify, orig_apfs_verify);
+                const bool routed = patcher.routeMultipleLong(index, &route, 1, address, size);
+                if (!routed) {
+                    SYSLOG("btleadv", "failed to route the integrity check");
+                    patcher.clearError();
+                }
+                noteHook("BTLEAdvVerifyHook", routed ? 1 : 0);
+            });
         hciLock = IOLockAlloc();
         lengthLock = IOSimpleLockAlloc();
         if (!lengthLock)
@@ -440,10 +598,10 @@ PluginConfiguration ADDPR(config) {
 extern "C" {
 extern kern_return_t _start(kmod_info_t *, void *);
 extern kern_return_t _stop(kmod_info_t *, void *);
-extern kern_return_t BTLEAdvFixup_kern_start(kmod_info_t *, void *);
-extern kern_return_t BTLEAdvFixup_kern_stop(kmod_info_t *, void *);
-__attribute__((visibility("default"))) KMOD_EXPLICIT_DECL(org.forbiddenitlwm.BTLEAdvFixup, xStringify(MODULE_VERSION), _start, _stop)
-__attribute__((visibility("hidden"))) kmod_start_func_t *_realmain = BTLEAdvFixup_kern_start;
-__attribute__((visibility("hidden"))) kmod_stop_func_t *_antimain = BTLEAdvFixup_kern_stop;
+extern kern_return_t IntelBTPatcher_kern_start(kmod_info_t *, void *);
+extern kern_return_t IntelBTPatcher_kern_stop(kmod_info_t *, void *);
+__attribute__((visibility("default"))) KMOD_EXPLICIT_DECL(org.forbiddenitlwm.IntelBTPatcher, xStringify(MODULE_VERSION), _start, _stop)
+__attribute__((visibility("hidden"))) kmod_start_func_t *_realmain = IntelBTPatcher_kern_start;
+__attribute__((visibility("hidden"))) kmod_stop_func_t *_antimain = IntelBTPatcher_kern_stop;
 __attribute__((visibility("hidden"))) int _kext_apple_cc = __APPLE_CC__;
 }

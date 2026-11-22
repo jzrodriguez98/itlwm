@@ -14,7 +14,7 @@ What each one does:
 
 | Flag | Effect |
 | --- | --- |
-| `-btleadv` | Turns BTLEAdvFixup on, so `bluetoothd` can start Bluetooth LE advertising on the Intel controller. `-btleadvoff` turns it off again |
+| `-btleadv` | Turns this branch's IntelBTPatcher (renamed BTLEAdvFixup) on, so `bluetoothd` can start Bluetooth LE advertising on the Intel controller. `-btleadvoff` turns it off again |
 | `-itlawdlcoexprobe` | Adds a second firmware context, the AWDL listener, beside the normal Wi-Fi station |
 | `-itlawdliface` | Tells macOS the card can do AWDL and creates the `awdl0` interface |
 | `-itlawdlnativeup` | Accepts the requests that let macOS's AWDL peer manager start |
@@ -39,7 +39,7 @@ What each one does:
 | --- | --- |
 | `itlawdltxpool=N` | Size of the `awdl0` transmit packet pool, 896 to 8192. Default 2048. Below that, long Mac → iPhone transfers can stall |
 | `-itlawdlanybuild` | Starts AirDrop on a macOS build the driver hasn't verified. **Risk of a kernel panic.** Only for testing a new build, from a USB stick. From 0.6.0-beta.2 it also turns on the announcement (`-itlawdlmitx`), so other devices can list the Mac and AirDrop can really be tested; before, it stayed off there and nothing was listed. `ItlwmAWDLMiState` then reads "on (unverified build, -itlawdlanybuild)". It doesn't override the check of Apple's AWDL function table |
-| `itlawdlbtcoex=1` | Firmware Bluetooth coexistence mode 1. Fixed choppy Bluetooth audio during AirDrop on an older test build. Before 0.5.1 it only took effect in the monitor test mode |
+| `itlawdlbtcoex=N` | Forces firmware Bluetooth coexistence mode N (0 off, 1 NW, 2 BT, 3 Wi-Fi). From 0.6.0-beta.4, mode 1 (NW, with SYNC2SCO, HIGH_BAND_RET and MPLUT when the firmware has it, as Linux) is the default; it once fixed choppy Bluetooth audio during AirDrop as `itlawdlbtcoex=1`. Other modes are sent without modules. `ITLAWDLBtCoexMode` and `ITLAWDLBtCoexModules` show what was sent |
 | `itlwm_scanout=N` | Longer off-channel visits for full scans while connected, N from 120 to 480 TU. By default each visit is capped at 120 TU, which fits one passive (DFS) channel before the 120 TU back home, so a full 5 GHz scan while connected can take 8–14 s and the Wi-Fi menu and Settings panel wait on it. 240–360 brought it to about 4.7 s on an AX210; 480 was slower. The 120 TU home time, low-latency scans and scans while not connected are unchanged. `ItlwmScanMaxOutTU` shows the value in use (#64) |
 | `itlwm_lqmint=N` | Posts a link-quality update only when the signal moves by 3 dB or more, or after N seconds (1 to 60). By default it's every 2 s plus every 8th beacon, which makes macOS announce a signal change about 1.7 times a second. macOS takes the link's signal only from these updates, so check that `printf 'show State:/Network/Interface/en0/LinkQuality\n' \| scutil` (your Wi-Fi interface) stays at 100 and that iMessage works. `ItlwmLqmMinIntervalSec` and `ItlwmWCLLqmSuppressed` show the setting and the updates held back (#64) |
 | `-itllog` | From 0.6.0: keeps the driver's own log and publishes it as `ITLAWDLLog`, so a failed wake or a firmware restart can be read back afterwards. It's hex: `ioreg -l -w0 \| grep '"ITLAWDLLog"' \| sed 's/.*<//; s/>.*//' \| xxd -r -p`. **It can hold network names and addresses**: check it before posting. While it is set, any app on this Mac can read the log. From 0.6.0-beta.1 the driver no longer writes network names or EAPOL handshakes into it, and Wi-Fi addresses (MAC, BSSID) appear only as their last two bytes. Turn it off once you have what you need |
@@ -75,9 +75,9 @@ Not needed for AirDrop. Listed so you know what they do if you find them in a gu
 | `-itlawdlpmdebug` | Asks macOS's AWDL peer manager for its debug flags. Diagnostic only |
 | `-itlawdldatacopy` | Publishes `ItlwmAWDLDataCopyAttempts`/`Success`, a receive-copy probe from the bring-up. Diagnostic only |
 | `-itlawdlpoolprobe` | Probes the `awdl0` packet pools once at start and publishes the result. Diagnostic only |
-| `-btlenoscan` | BTLEAdvFixup: advertising fixes only, without the scanning changes. For comparison |
-| `-btleadvdbg`, `-btleadvbeta` | Lilu's standard debug and beta switches for BTLEAdvFixup |
-| `itlwm_he=1` | Wi-Fi 6 (802.11ax), from the upstream driver. Not tested here. One tester ran all their AirDrop tests with it without problems (#58); on another's AX201, Wi-Fi dropped as soon as an AirDrop started, and AirDrop worked once it was removed (#83). Leave it off if you use AirDrop |
+| `-btlenoscan` | The renamed IntelBTPatcher plugin: advertising fixes only, without the scanning changes. For comparison |
+| `-btleadvdbg`, `-btleadvbeta` | Lilu's standard debug and beta switches for this branch's IntelBTPatcher plugin |
+| `itlwm_he=1` | Wi-Fi 6 (802.11ax), from the upstream driver. Not tested here. One tester ran all their AirDrop tests with it without problems (#58); on another's AX201, Wi-Fi dropped as soon as an AirDrop started (#83), with a router using 160 MHz. Fixed in 0.6.0-beta.4; not tested here yet |
 | `-novht`, `-noht40` | Upstream: no 802.11ac, or no 40 MHz on the Mac's own Wi-Fi |
 
 ## Don't use

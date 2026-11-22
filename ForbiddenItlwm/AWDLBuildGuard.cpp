@@ -128,7 +128,7 @@ bool itlAWDLBuildAllowed()
         gStatus = "blocked: unverified macOS build";
         gAllowed = 0;
     }
-    IOLog("ForbiddenItlwm: AirDrop %s\n", gStatus);
+    IOLog("AirportItlwm: AirDrop %s\n", gStatus);
     return gAllowed == 1;
 }
 
@@ -164,7 +164,7 @@ bool itlAWDLBuildVerified()
     if (!pairVerified) {
         snprintf(statusText, sizeof(statusText), "allowed: kernel verified, macOS build %s not verified", osBuild);
         gStatus = statusText;
-        IOLog("ForbiddenItlwm: AirDrop %s; the master indication copy stays off\n", gStatus);
+        IOLog("AirportItlwm: AirDrop %s; the master indication copy stays off\n", gStatus);
     }
     return pairVerified == 1;
 }

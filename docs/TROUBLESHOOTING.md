@@ -54,15 +54,17 @@ Seen with the router on channel 44 and the other device on the same network. Tha
 
 - **Boot flags:** check that the whole tested set from [BOOT-FLAGS.md](BOOT-FLAGS.md) is set, not part of it. Without `-itlawdlmitx` the driver, the listener, `awdl0` and Bluetooth all look healthy and `ITLAWDLCoexPeerSyncFrames` rises, but `ItlwmAWDLMiState` is `off`, `ItlwmAWDLSyncMIBuilt` stays 0 and `ITLAWDLCoexDataRx` stays 0: the other device hears the Mac but never learns it offers AirDrop. `check_compat.sh` checks the whole set and `ItlwmAWDLMiState`.
 - **The Mac's Wi-Fi on a radar (DFS) channel, 52–144:** without `-itlawdlcoexmulti` the listener shares that channel, where no Apple device looks for AirDrop, so nothing is found (#63). Keep `-itlawdlcoexmulti`, as in the tested set.
-- **Bluetooth:** it must be on, with BTLEAdvFixup for your macOS version loaded, `-btleadv` set and IntelBTPatcher disabled. AirDrop finds devices over Bluetooth LE first. BTLEAdvFixup's patterns only match specific builds (26.7.1 and, from 0.8.1, 26.7.3 and 26.7.2, with 26.7.2's own pattern for one site from 0.9.1, on Tahoe; 15.8, 15.8.2 and 15.8.3 on Sequoia; from 0.9.0, 14.8.9 on Sonoma): `check_compat.sh` shows whether they match yours. To check it's running: `ioreg -l -w0 -d1 | grep '"BTLEAdv'` should show `BTLEAdvHookRouted` = 1. On Sequoia, BTLEAdvFixup before 0.8.3 never started.
+- **Bluetooth:** it must be on, with this branch's `IntelBTPatcher.kext` for your macOS version loaded and `-btleadv` set. The original IntelBTPatcher implementation must be disabled. AirDrop finds devices over Bluetooth LE first. BTLEAdvFixup's patterns only match specific builds (26.7.1 and, from 0.8.1, 26.7.3 and 26.7.2, with 26.7.2's own pattern for one site from 0.9.1, on Tahoe; 15.8, 15.8.2 and 15.8.3 on Sequoia; from 0.9.0, 14.8.9 on Sonoma): `check_compat.sh` shows whether they match yours. To check it's running: `ioreg -l -w0 -d1 | grep '"BTLEAdv'` should show `BTLEAdvHookRouted` = 1. On Sequoia, BTLEAdvFixup before 0.8.3 never started.
 - **SMBIOS serial number** ([#46](https://github.com/retropineaple/ForbiddenItlwm/issues/46)): with an empty PlatformInfo → Generic, macOS uses the motherboard maker's serial, Apple's identity service never registers the Mac, and AirDrop drops the devices it finds: nothing is listed on either side, though every check here passes. `rapportd` then logs `Failed to get self IDS Correlation Identifier`. Generate SystemSerialNumber and MLB with `macserial` for your SMBIOS model, set ROM to the Wi-Fi card's MAC address (see the iMessage section below), and reboot.
 - **AirDrop settings:** with Contacts Only, the two devices must share an Apple Account or know each other as contacts. Try Everyone for 10 Minutes to rule this out.
 - **Is the iPhone heard?** Read `ITLAWDLCoexPeerSyncFrames` twice, a few seconds apart, with the iPhone's share sheet open. If it rises, the radios hear each other.
 - **Unlock the iPhone and keep the share sheet open** for 10 to 15 seconds.
+- **The iPhone can lose track of the Mac as one of your own devices.** In testing, after a day of many reboots, the iPhone stopped listing the Mac on every build, including builds that had worked earlier that day, while the Mac could still see and send to the iPhone. Texts sent from the Mac (relayed through the iPhone) failed at the same time, and the iPhone's Settings → Apps → Messages → Text Message Forwarding showed "sign in with your Apple Account on other devices" with no switch for the Mac. **Turning iMessage off and on on the iPhone fixed both** (Settings → Apps → Messages → iMessage). The Mac then showed "Device Added to Your Account", and about two minutes later the iPhone listed the Mac again and texts from the Mac went through. Reset Network Settings did not help with this one.
 - **The iPhone itself can get stuck.** During testing there was a period when the iPhone listed no Mac on any build, including builds that had worked earlier that day, while the Mac could still see and send to the iPhone. Several restarts didn't fix it. **Reset Network Settings on the iPhone did.** A factory reset also helped, but only for a while. If the Mac's counters look healthy, look at the iPhone before the driver. Try these in order:
   1. Restart the iPhone.
-  2. Settings → General → Transfer or Reset iPhone → Reset → Reset Network Settings. This forgets saved Wi-Fi networks.
-  3. As a last resort, back up the iPhone and factory reset it. Afterwards the iPhone is a new device to AirDrop: Contacts Only won't match until it's signed in to its Apple Account again and has synced, so use Everyone for 10 Minutes meanwhile. Finder may list it twice for a while.
+  2. Turn iMessage off and on on the iPhone (see above), and wait two minutes.
+  3. Settings → General → Transfer or Reset iPhone → Reset → Reset Network Settings. This forgets saved Wi-Fi networks.
+  4. As a last resort, back up the iPhone and factory reset it. Afterwards the iPhone is a new device to AirDrop: Contacts Only won't match until it's signed in to its Apple Account again and has synced, so use Everyone for 10 Minutes meanwhile. Finder may list it twice for a while.
 
 ## Sequoia: the devices list each other, but transfers stay on "Waiting"
 
@@ -102,7 +104,7 @@ In a busy area, with many networks in range, the Wi-Fi menu and System Settings 
 
 ## A new Bluetooth LE mouse or keyboard won't pair
 
-Fixed in BTLEAdvFixup 0.9.1 (from 0.5.4-beta.2, #27). Earlier versions, with IntelBTPatcher disabled, let a new LE mouse or keyboard connect but never finish pairing; devices paired before kept working. Update BTLEAdvFixup. If a device still won't pair with 0.9.1, check `ioreg -l -w0 -d 1 | grep -E '"BTLEAdv(PipeHooks|LengthRewrites|LengthFailures)"'` while pairing (`PipeHooks` should be 5, and `LengthRewrites` should go up) and report it.
+Fixed in the BTLEAdvFixup implementation version 0.9.1 (from 0.5.4-beta.2, #27). Earlier versions, with IntelBTPatcher disabled, let a new LE mouse or keyboard connect but never finish pairing; devices paired before kept working. Update this branch's IntelBTPatcher bundle (the BTLEAdvFixup implementation). If a device still won't pair with 0.9.1, check `ioreg -l -w0 -d 1 | grep -E '"BTLEAdv(PipeHooks|LengthRewrites|LengthFailures)"'` while pairing (`PipeHooks` should be 5, and `LengthRewrites` should go up) and report it.
 
 BTLEAdvFixup 0.9.2 (0.6.0-beta.1) also stops that fix from taking over the controller's event pipe when a pairing round doesn't finish ([PR #61](https://github.com/retropineaple/ForbiddenItlwm/pull/61)): with 0.9.1, that could leave USB devices unresponsive until a cold boot, or panic. `BTLEAdvLengthExpired` and `BTLEAdvLengthAborts` count rounds given up.
 
@@ -130,11 +132,19 @@ Not supported yet. Instant Hotspot's Bluetooth connection to the iPhone times ou
 
 ## Bluetooth turns off after some hours, and `bluetoothd` crash reports say `KERN_MEMORY_ERROR`
 
-Seen on Tahoe 26.7.3 ([#62](https://github.com/retropineaple/ForbiddenItlwm/issues/62)). `bluetoothd` crashes with `EXC_BAD_ACCESS (SIGBUS)`, restarts a few times, and Bluetooth then shows as Off. The crash reports name APFS: "compressed data hash mismatch".
+Seen on Tahoe 26.7.1 and 26.7.3 ([#62](https://github.com/retropineaple/ForbiddenItlwm/issues/62)), also without ForbiddenItlwm. `bluetoothd` crashes with `EXC_BAD_ACCESS (SIGBUS)`, restarts a few times, and Bluetooth then shows as Off. The crash reports name APFS: "compressed data hash mismatch".
 
 BlueToolFixup and BTLEAdvFixup both patch `bluetoothd`'s code in memory, in the copy macOS shares between processes. When memory runs low, macOS drops part of a block of that code and reads it again later, and its integrity check then also covers the page that is still patched, which fails. It follows memory pressure, so it shows up after hours, not at boot.
 
-Until there's a fix: a full power-off (not a restart) brings Bluetooth back. Please add the crash reports to #62, with your RAM size and `memory_pressure | tail -1`.
+Fixed in 0.6.0-beta.4 (BTLEAdvFixup source version 0.9.4), with `-btleadv` and this branch's renamed `IntelBTPatcher.kext` after `BlueToolFixup.kext` in `Kernel` → `Add` (the order in [INSTALL.md](INSTALL.md)). The renamed plugin then gives APFS's check the original bytes of the patched pages, BlueToolFixup's too. Check:
+
+```bash
+ioreg -l -w0 | grep -E '"BTLEAdv(VerifyHook|PatchedPages|VerifyRescues|VerifyRescueFailures)"'
+```
+
+`BTLEAdvVerifyHook` should be 1. `BTLEAdvPatchedPages` counts the patched pages it knows: on 26.7.1 it's 6 once Bluetooth has been used, four from BlueToolFixup and two from BTLEAdvFixup. If it stays at 2 or less, the renamed plugin loads before BlueToolFixup and can't see BlueToolFixup's patches: move it after. `BTLEAdvVerifyRescues` counts reloads that would have crashed `bluetoothd`.
+
+Without the renamed plugin (BlueToolFixup alone, with any Bluetooth card), a full power-off (not a restart) still brings Bluetooth back.
 
 ## Wi-Fi is off or greyed out, and there's no `en0`
 
@@ -161,7 +171,7 @@ printf 'show State:/Network/Interface/en0/LinkQuality\n' | scutil
 ```
 
 - **It should be 100 (or 50 or 10 on a weak signal).** ForbiddenItlwm 0.2.0 and later set it on Tahoe, 0.3.0 and later on Sequoia, and the Sonoma build sets it too. With -2 ("off"), Apple Push won't connect over Wi-Fi, and iMessage, FaceTime and other push-based services fail. Older builds and the original AirportItlwm for Tahoe leave it at -2.
-- **If iMessage on the Mac only sends as text messages** (relayed through the iPhone) and they fail, re-enable the Mac on the iPhone: Settings → Apps → Messages → Text Message Forwarding. A new SMBIOS ROM makes the Mac a new device to Apple.
+- **If iMessage on the Mac only sends as text messages** (relayed through the iPhone) and they fail, re-enable the Mac on the iPhone: Settings → Apps → Messages → Text Message Forwarding. A new SMBIOS ROM makes the Mac a new device to Apple. If that screen has no switch for the Mac and says to sign in on other devices, turn iMessage off and on on the iPhone and wait about two minutes (see "The iPhone doesn't list the Mac").
 - **For iMessage on a hackintosh in general:** use a serial that Apple's coverage check calls invalid. Set ROM to the Wi-Fi card's permanent MAC address (`ifconfig en0 | grep ether`).
 
 ## Reporting a bug

@@ -54,10 +54,11 @@ With `-itlawdlcoexbatx` the driver negotiates Block Ack with the iPhone and lets
 
 The `awdl0` transmit pool is 2048 packets. With the 128 used during bring-up, long Mac → iPhone transfers ran the pool dry and stalled, because the flowswitch drops on allocation failure without telling QUIC.
 
-### 5. Bluetooth: BTLEAdvFixup
+### 5. Bluetooth: IntelBTPatcher (renamed BTLEAdvFixup)
 
 `bluetoothd` only turns on extended LE advertising after chip checks that a third-party controller fails, so on an Intel controller the Mac never advertises AirDrop. BTLEAdvFixup is a small Lilu plugin that, with `-btleadv`:
 - patches `bluetoothd`'s pages in memory as they're validated (the way BlueToolFixup does) to take the "supported" path
+- keeps APFS's integrity check working on those pages (#62). The patches live in the copy of the file that macOS keeps in memory. `bluetoothd` is stored compressed, and APFS checks it in 16 KB blocks: when macOS drops one page of a block and reads it again, the check also covers the block's pages that are still in memory, patched, and fails, so `bluetoothd` crashed. BTLEAdvFixup keeps each patched page's original bytes (BlueToolFixup's too, since its hook runs around BlueToolFixup's) and hooks APFS's `apfs_vnop_verify`, the function decmpfs calls for this check, to give it a copy with the original bytes. The pages in memory are never changed by the check
 - adjusts outgoing HCI commands, such as the random address of each advertising set, and takes over IntelBTPatcher's fix-up before the first scan (IntelBTPatcher must be disabled, since Lilu panics if two plugins hook the same function)
 - takes over IntelBTPatcher's fix for new LE HID devices (a mouse, a keyboard) that connect but never finish bonding: the Intel controller never sends LE Data Length Change on Tahoe, so `bluetoothd` waits for it forever ("No database exists"). BTLEAdvFixup hooks the controller's interrupt IN pipe, sends every LE Read Remote Features command twice more, and rewrites the two duplicate completions into the PHY Update Complete and LE Data Length Change events `bluetoothd` is missing. Devices that are already bonded skip discovery and never trigger this.
 
@@ -143,8 +144,9 @@ These each took one or more test boots to learn.
 | `include/Airport/macOS15/` | Sequoia's native class declarations, for 15.8 (24H23, 24H241) |
 | `include/Airport/macOS14/`, `include/Airport/*.h` | Sonoma's AWDL declarations (generated from 23J631), and the non-WCL base classes it builds on |
 | `BTLEAdvFixup/` | The Bluetooth LE advertising plugin |
+| `tests/`, `tools/test_awdl.py` | Offline tests, many of them on real driver functions extracted into mocks |
 | `tools/build.py`, `tools/sources.txt` | Command Line Tools build of `AirportItlwm.kext` |
-| `tools/build_btleadv.py` | Build of `BTLEAdvFixup.kext` |
+| `tools/build_btleadv.py` | Build of `IntelBTPatcher.kext` from `BTLEAdvFixup/` sources |
 | `tools/abi/` | The virtual table audit against 25G241 (Tahoe), 24H241 (Sequoia) and 23J631 (Sonoma) |
 | `ForbiddenItlwm/AWDLBuildGuard.cpp`, `include/AWDLBuildGuard.hpp` | The macOS build check |
 | `tools/awdl_*.py` | Readers for the driver's registry diagnostics |

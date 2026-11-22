@@ -29,7 +29,7 @@ public:
     // Under the shared gate. Converts the oldest queued frame into a caller-owned buffer.
     bool popTransmit(uint8_t *, size_t, size_t *, const uint8_t *holdPayloadFor, bool holdEverySize = false);
     // Frames macOS has queued that the driver hasn't taken yet.
-    unsigned queuedTransmit() const { return transmitQueued; }
+    unsigned queuedTransmit() const { return transmitQueued + parkedQueued; }
     unsigned heldShortTransmit() const { return transmitHeldShort; }
     IOReturn initializeNetwork(IO80211Controller*, IOWorkLoop*, const ether_addr&);
     IOReturn receiveManagementFrame(IO80211Controller*, const uint8_t*, size_t, uint32_t, int32_t);
@@ -45,7 +45,7 @@ public:
 #endif
     // Pure in IO80211VirtualInterface on Tahoe, and in IO80211SkywalkInterface on Sequoia.
 #if __IO80211_TARGET != __MAC_14_4   // not a virtual on Sonoma
-    IOReturn setMacAddress(ether_addr&) override { return unsupported("setMacAddress"); }
+    IOReturn setMacAddress(ether_addr&) override;
 #endif
     IOReturn getSSID(apple80211_ssid_data*) override { return unsupported("getSSID"); }
     IOReturn getCHANNEL(apple80211_channel_data*) override { return unsupported("getCHANNEL"); }
@@ -160,9 +160,22 @@ private:
     void drainTransmitDone();
     uint32_t transmitDepthBins[9] = {};
     uint16_t transmitSequence = 0;
+    // Frames for the one peer the radio holds (holdPayloadFor), taken off the FIFO in their order so the frames
+    // behind them, for other peers, still go. They leave first, in order, once that peer is no longer held, and
+    // the peer's later frames join them meanwhile. Without this a held frame at the head stopped all of awdl0:
+    // with the iPhone idle on its Wi-Fi network (on our channel 1 slot in 16) and an iPad in Sidecar, the iPad's
+    // TCP over awdl0 resent 26 to 66 % of its packets and the iPad ended each session after 20 to 52 s.
+    static constexpr unsigned parkedFrameMax = 2048;
+    unsigned parkedFrameCount = 0;
+    TransmitFrame *parkedFrames = nullptr;
+    unsigned parkedHead = 0, parkedQueued = 0, parkedPeak = 0, transmitParked = 0, transmitPassed = 0;
+    uint8_t parkedPeer[6] = {};
     bool dataTransmitEnabled = false;
     ItlAWDLNativeState nativeState;
     unsigned oobRequests = 0;
+#if __IO80211_TARGET != __MAC_14_4   // setMacAddress isn't a virtual on Sonoma
+    unsigned addressSetCalls = 0;
+#endif
     bool oobSampled = false, debugFlagsSet = false, debugFlagsWanted = false;
     IOReturn noteOobRequest(const apple80211_awdl_oob_request *, const char *);
     // Native 25G241 layout read from both the sender and Apple's Broadcom handler:

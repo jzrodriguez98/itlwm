@@ -52,7 +52,7 @@
 		</dict>
 	</dict>
 	<key>NSHumanReadableCopyright</key>
-	<string>ForbiddenItlwm: AirDrop (AWDL) for Intel Wi-Fi. Based on AirportItlwm for macOS Tahoe by laobamac and on itlwm by OpenIntelWireless. GPL-2.0.</string>
+	<string>AirportItlwm: AirDrop (AWDL) for Intel Wi-Fi. Based on AirportItlwm for macOS Tahoe by laobamac and on itlwm by OpenIntelWireless. GPL-2.0.</string>
 	<key>OSBundleLibraries</key>
 	<dict>
 		<key>com.apple.driver.corecapture</key>

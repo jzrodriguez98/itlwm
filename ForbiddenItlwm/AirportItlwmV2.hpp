@@ -25,6 +25,7 @@
 #include <IOKit/IOLib.h>
 #include <libkern/OSKextLib.h>
 #include <libkern/c++/OSMetaClass.h>
+#include <AWDLTxPass.hpp>
 #include <IOKit/IOFilterInterruptEventSource.h>
 
 #include "ItlIwm.hpp"
@@ -80,7 +81,9 @@ public:
     IOReturn receiveAWDLActionFrame(mbuf_t, size_t, uint32_t, int32_t);
     void observeAWDLDataFrame(const uint8_t*, size_t);
     IOReturn buildAWDLSyncProbe(mbuf_t*, uint64_t);
-    IOReturn buildAWDLTransmit(mbuf_t*, const uint8_t *holdPayloadFor = nullptr, bool holdEverySize = false);
+    IOReturn buildAWDLTransmit(mbuf_t*, const uint8_t *holdPayloadFor = nullptr, bool holdEverySize = false,
+                               const ItlAWDL::TxPassList *pass = nullptr);
+    IOReturn buildAWDLTransmitFor(mbuf_t*, const uint8_t *destination, size_t maxLength);
     bool serviceAWDLTransmit();
     unsigned queuedAWDLTransmit();
     unsigned heldShortAWDLTransmit();
@@ -182,6 +185,11 @@ public:
     bool createMediumTables(const IONetworkMedium **primary);
     void releaseAll();
     void watchdogAction(IOTimerEventSource *timer);
+    void publishRxErrors();
+    uint32_t rxErrorsTick = 0;
+    uint32_t rxErrorsLastSum = 0;
+    bool rxErrorsPublished = false;
+    void reportInfraTraffic();   // (-itlinfrastats), non-virtual
     
     virtual SInt32 enableFeature(IO80211FeatureCode, void*) override;
     virtual bool isCommandProhibited(int command) override {

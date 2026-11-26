@@ -12,6 +12,13 @@
 #include <ItlScanCursor.hpp>
 #ifdef AIRPORT_WCL
 #include "WCL/WCL.hpp"
+
+// ItlwmWCLTrace: the last 64 WCL interactions, for joins that fail between WCL and the driver.
+// kind: '>' message to WCL (id = message, a = first payload word), '<' WCL command (id = command,
+// a = result), 'e' net80211 event (id = code), 'm' MAC address set (a = MacUpdate, b = result),
+// 'j' join start (a = result, b = 1 if deferred until the firmware restart ends).
+void itlWCLTrace(char kind, uint32_t id, uint32_t a, uint32_t b);
+bool itlWCLTraceText(char *out, size_t size, uint32_t *version);
 #endif
 
 #include <Airport/Apple80211.h>
@@ -21,6 +28,36 @@
 #else
 #define AIRPORT_SKYWALK_OVERRIDE override
 #endif
+
+// Power save mode.
+//
+// The SDK only forward declares the structure that travels with
+// APPLE80211_IOC_PM_MODE, so the layout was recovered from the framework:
+// the framework sends 0x188 (392) bytes with that ioctl. Only the first
+// two words are known to carry the request itself, the remainder of the
+// payload is reserved and still holds whatever the framework had in its
+// buffer.
+struct apple80211_pm_mode {
+    uint32_t mode;         // 0x00, the power mode the framework asks for
+    uint32_t flags;        // 0x04
+    uint8_t reserved[384]; // 0x08 .. 0x188
+};
+static_assert(sizeof(apple80211_pm_mode) == 0x188, "apple80211_pm_mode size");
+
+// Firmware hot channels.
+//
+// The SDK only forward declares the structure that travels with
+// APPLE80211_IOC_WCL_FW_HOT_CHANNELS, so the layout was recovered from the
+// framework: WCLNeighborCacheManager::constructNeighborCacheFromFWHotChannels
+// asks for it with a length of 0x14 (20) bytes, then it reads the number of
+// entries at offset 0x10 and walks that many two byte channel
+// specifications, which start at offset 0.
+struct apple80211_fw_hot_channels {
+    uint16_t channels[8]; // 0x00, one AppleChannelSpec_t per entry
+    uint32_t count;       // 0x10, number of entries in the list
+};
+static_assert(sizeof(apple80211_fw_hot_channels) == 0x14,
+              "apple80211_fw_hot_channels size");
 
 class AirportItlwmSkywalkInterface : public IO80211InfraProtocol {
     OSDeclareDefaultStructors(AirportItlwmSkywalkInterface)
@@ -231,7 +268,7 @@ public:
     virtual IOReturn getTIMESYNC_INFO(apple80211_timesync_info *) AIRPORT_SKYWALK_OVERRIDE { return kIOReturnUnsupported; }
     virtual IOReturn getSENSING_DATA(apple80211_sensing_data_t *) AIRPORT_SKYWALK_OVERRIDE { return kIOReturnUnsupported; }
     virtual IOReturn getCOUNTRY_BAND_SUPPORT(apple80211_country_band_support *) AIRPORT_SKYWALK_OVERRIDE { return kIOReturnUnsupported; }
-    virtual IOReturn getWCL_FW_HOT_CHANNELS(apple80211_fw_hot_channels *) AIRPORT_SKYWALK_OVERRIDE { return kIOReturnUnsupported; }
+    virtual IOReturn getWCL_FW_HOT_CHANNELS(apple80211_fw_hot_channels *) AIRPORT_SKYWALK_OVERRIDE;
 #ifdef AIRPORT_WCL
     virtual IOReturn getWCL_LOW_LATENCY_INFO(apple80211_low_latency_info *) override;
 #else
@@ -279,7 +316,7 @@ public:
     virtual IOReturn setAUTH_TYPE(apple80211_authtype_data *) AIRPORT_SKYWALK_OVERRIDE;
     virtual IOReturn setCIPHER_KEY(apple80211_key *) AIRPORT_SKYWALK_OVERRIDE;
     virtual IOReturn setCHANNEL(apple80211_channel_data *) AIRPORT_SKYWALK_OVERRIDE { return kIOReturnUnsupported; }
-    virtual IOReturn setPOWERSAVE(apple80211_powersave_data *) AIRPORT_SKYWALK_OVERRIDE { return kIOReturnUnsupported; }
+    virtual IOReturn setPOWERSAVE(apple80211_powersave_data *) AIRPORT_SKYWALK_OVERRIDE;
     virtual IOReturn setTXPOWER(apple80211_txpower_data *) AIRPORT_SKYWALK_OVERRIDE { return kIOReturnUnsupported; }
     virtual IOReturn setRATE(apple80211_rate_data *) AIRPORT_SKYWALK_OVERRIDE { return kIOReturnUnsupported; }
     virtual IOReturn setSCAN_REQ(apple80211_scan_data *) AIRPORT_SKYWALK_OVERRIDE;
@@ -346,7 +383,7 @@ public:
     virtual IOReturn setABORT_SCAN(apple80211_abort_scan *) AIRPORT_SKYWALK_OVERRIDE { return kIOReturnUnsupported; }
     virtual IOReturn setSET_PROPERTY(apple80211_set_property_unserialized_data *) AIRPORT_SKYWALK_OVERRIDE { return kIOReturnUnsupported; }
     virtual IOReturn setROAM_CACHE_UPDATE(apple80211_roam_cache_data *) AIRPORT_SKYWALK_OVERRIDE { return kIOReturnUnsupported; }
-    virtual IOReturn setPM_MODE(apple80211_pm_mode *) AIRPORT_SKYWALK_OVERRIDE { return kIOReturnUnsupported; }
+    virtual IOReturn setPM_MODE(apple80211_pm_mode *) AIRPORT_SKYWALK_OVERRIDE;
     virtual IOReturn setSET_WIFI_ASSERTION_STATE(apple80211_wifi_assertion_data *) AIRPORT_SKYWALK_OVERRIDE { return kIOReturnUnsupported; }
     virtual IOReturn setREASSOCIATE_WITH_CORECAPTURE(apple80211_capture_debug_info_t *) AIRPORT_SKYWALK_OVERRIDE { return kIOReturnUnsupported; }
     virtual IOReturn setLINKDOWN_DEBOUNCE_STATUS(apple80211_linkdown_debounce_status *) AIRPORT_SKYWALK_OVERRIDE { return kIOReturnUnsupported; }
@@ -429,6 +466,8 @@ public:
     void completeWCLScan();
 private:
     static IOReturn wclCommand(OSObject *, void *, void *, void *, void *);
+    static IOReturn wclCommandBody(OSObject *, void *, void *, void *);
+    void wclPost(uint32_t, void *, unsigned long, bool);
     struct CountryUpdate;
     static void wclCountryUpdateThread(void *, void *);
     static IOReturn wclCountryUpdateGated(OSObject *, void *, void *, void *, void *);
@@ -475,6 +514,35 @@ private:
     bool assocNotified;
     bool firstBeaconNotified;
     bool portAuthorized;
+    // The first beacon of a personal network arrived before the four way
+    // handshake was done, so the link status was held back until the port
+    // was authorized.
+    bool wclFirstBeaconHeld = false;
+    // Whether the command gate may be taken.
+    //
+    // Waiting for the gate is the one thing in the driver that can block the
+    // shutdown: the framework holds the gate while it tears the interface
+    // down and waits for the driver in return, so a request that arrives in
+    // that window deadlocks. Every entry point that takes the gate has to ask
+    // this first and fail instead of waiting.
+    bool canUseCommandGate() const;
+    // Publishes the BSSID that was captured while the network was still being
+    // scanned, for a join request that did not name one.
+    void publishEarlyBssid();
+    uint8_t earlyBssid[6] = {};
+    bool earlyBssidPending = false;
+    // The name of a network that hides it, learned from a directed scan that
+    // was asked for it by name.
+    uint8_t wclHiddenSsid[32] = {};
+    uint8_t wclHiddenSsidLength = 0;
+    uint8_t wclHiddenBssid[6] = {};
+    bool wclHasHiddenSsid = false;
+    // The power mode the framework asked for with APPLE80211_IOC_PM_MODE.
+    uint32_t pmMode = 0;
+    uint32_t pmModeFlags = 0;
+    // The power save level the framework asked for with APPLE80211_IOC_POWERSAVE.
+    // Disabled until the framework sets a level: the driver does no power saving of its own.
+    uint32_t wclPowersaveLevel = APPLE80211_POWERSAVE_MODE_DISABLED;
     uint8_t wclPermanentMAC[6] = {};
     bool wclStopping;
 #endif

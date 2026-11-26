@@ -4,6 +4,7 @@
 #include <Airport/IOSkywalkQueueFactories.h>
 #include "AWDLRequestedValue.hpp"
 #include "AWDLInactiveProtocol.hpp"
+#include <AWDLTxPass.hpp>
 #include <IOKit/IOLocks.h>
 
 class ItlAWDLInterface : public IO80211AWDLProtocol {
@@ -26,8 +27,16 @@ public:
     // Under the shared gate. Prepared TLVs for a master indication frame, if any.
     bool copyMasterIndication(uint8_t *, size_t, size_t *);
     bool hasMasterIndication() const { return masterIndicationLength != 0; }
+    // -itlawdlumi: macOS's one-shot unicast MI (setAWDL_OOB_REQUEST), taken once by the sync builder.
+    bool takeUnicastMI(uint8_t *output, size_t capacity, size_t *written, uint8_t peer[6], uint64_t nowUS);
+    void noteUnicastMISent();
     // Under the shared gate. Converts the oldest queued frame into a caller-owned buffer.
-    bool popTransmit(uint8_t *, size_t, size_t *, const uint8_t *holdPayloadFor, bool holdEverySize = false);
+    bool popTransmit(uint8_t *, size_t, size_t *, const uint8_t *holdPayloadFor, bool holdEverySize = false,
+                     const ItlAWDL::TxPassList *pass = nullptr);
+    // -itlawdlamsdutx: takes the oldest queued frame only if it is unicast data for `destination` that converts to at
+    // most `maxLength` bytes, and nothing is parked (so it is the frame popTransmit would return next). Otherwise
+    // nothing changes: no frame is taken to be put back.
+    bool popTransmitFor(uint8_t *, size_t, size_t *, const uint8_t *destination, size_t maxLength);
     // Frames macOS has queued that the driver hasn't taken yet.
     unsigned queuedTransmit() const { return transmitQueued + parkedQueued; }
     unsigned heldShortTransmit() const { return transmitHeldShort; }
@@ -85,9 +94,9 @@ public:
     IOReturn setAWDL_SYNCHRONIZATION_CHANNEL_SEQUENCE(apple80211_awdl_sync_channel_sequence *data) override;
     IOReturn setAWDL_MASTER_CHANNEL(apple80211_awdl_master_channel *data) override;
     IOReturn setAWDL_SYNC_STATE(apple80211_awdl_sync_state *data) override;
-    IOReturn setAWDL_ELECTION_RSSI_THRESHOLDS(apple80211_awdl_election_rssi_thresholds *data) override { return storeRequested(requested_AWDL_ELECTION_RSSI_THRESHOLDS, data, "AWDL_ELECTION_RSSI_THRESHOLDS"); }
+    IOReturn setAWDL_ELECTION_RSSI_THRESHOLDS(apple80211_awdl_election_rssi_thresholds *data) override;   //  reads +0x10
     IOReturn setAWDL_PRESENCE_MODE(apple80211_awdl_presence_mode *data) override { return storeRequested(requested_AWDL_PRESENCE_MODE, data, "AWDL_PRESENCE_MODE"); }
-    IOReturn setPEER_CACHE_CONTROL(apple80211_peer_cache_control*) override { return unsupported("setPEER_CACHE_CONTROL"); }
+    IOReturn setPEER_CACHE_CONTROL(apple80211_peer_cache_control*) override;
     IOReturn setAWDL_OOB_REQUEST(apple80211_awdl_oob_request *) override;
     IOReturn setAWDL_SYNC_FRAME_TEMPLATE(apple80211_awdl_sync_frame_template *data) override;
     IOReturn setAWDL_ELECTION_PARAMS(apple80211_awdl_election_params *) override;
@@ -142,7 +151,8 @@ private:
     void noteQueueState(const char *);
     UInt32 acceptTransmit(IOSkywalkPacket *const *, UInt32);
     // Only under the shared gate. Each frame is a copy, so no packet waits on the radio.
-    struct TransmitFrame { uint16_t length; uint8_t bytes[1514]; };
+    // next/order: for parked frames only, the next parked frame of the same peer and when it was parked.
+    struct TransmitFrame { uint16_t length; uint16_t next; uint32_t order; uint8_t bytes[1514]; };
     // itlawdltxqueue=N, 128 to 4096: frames held while the radio can't send, such as while the
     // peer is on another channel. A full queue drops, and the sender's transport reads that as loss.
     // Set once, before the frames are allocated (about 1.5 KB each).
@@ -169,7 +179,16 @@ private:
     unsigned parkedFrameCount = 0;
     TransmitFrame *parkedFrames = nullptr;
     unsigned parkedHead = 0, parkedQueued = 0, parkedPeak = 0, transmitParked = 0, transmitPassed = 0;
-    uint8_t parkedPeer[6] = {};
+    uint8_t parkedPeer[6] = {};   // the peer whose parked frame is oldest (the only one before -itlschedsecond)
+    // Several peers can have parked frames at once (-itlschedsecond's pass list holds every peer that isn't on the
+    // listener's channel). Each peer's frames are a list through the ring in their order; a frame taken from the
+    // middle leaves an empty slot (length 0) that is reused once the ring's head passes it. parkedUsed counts the
+    // ring's slots in use, empty ones included; parkedQueued counts frames.
+    static constexpr unsigned parkedPeerMax = 12;
+    struct ParkedPeer { uint8_t addr[6]; uint16_t first, last; uint32_t count; };
+    ParkedPeer parkedPeerTable[parkedPeerMax] = {};
+    unsigned parkedPeerCount = 0, parkedUsed = 0, parkedTableFull = 0;
+    uint32_t parkedSerial = 0;
     bool dataTransmitEnabled = false;
     ItlAWDLNativeState nativeState;
     unsigned oobRequests = 0;
@@ -186,6 +205,16 @@ private:
     bool masterIndicationEnabled = false;
     uint16_t masterIndicationSampledLength = 0;
     unsigned masterIndicationUpdates = 0, masterIndicationRejected = 0;
+    // the latest unicast MI request (one slot; a newer request replaces an unsent one).
+    bool buildMITLVs(const uint8_t *mi, size_t miLength, uint8_t *output, size_t capacity, size_t *written);
+    void storeUnicastMI(const apple80211_awdl_oob_request *);
+    void publishUnicastMI();
+    uint8_t umiBody[0x4b0] = {};
+    size_t umiLength = 0;
+    uint8_t umiPeer[6] = {};
+    uint64_t umiAtUS = 0;
+    unsigned umiRequests = 0, umiRejected = 0, umiReplaced = 0, umiSent = 0, umiStale = 0, umiBuildFailed = 0,
+        umiOnDwell = 0;
     uint32_t afTxModeValue = 0;
     ItlAWDLRequestedValue<apple80211_awdl_bssid> requestedBSSID;
     ItlAWDLRequestedValue<apple80211_awdl_sync_params> requested_AWDL_SYNC_PARAMS;
@@ -231,6 +260,9 @@ private:
     bool nativeStarted = false;
     bool registrationAttempted = false;
     uint32_t managementSubmissions = 0;
+    // peer-cache requests from IO80211 (sendIoctlToCachePeer), accepted only with -itlpeercache.
+    bool peerCacheAccept = false;
+    uint32_t peerCacheAdds = 0, peerCacheDeletes = 0, peerCacheOther = 0, peerCacheRefused = 0;
     IOReturn unsupported(const char *operation) {
         setProperty("ItlwmAWDLLastUnsupported", operation);
         return kIOReturnUnsupported;

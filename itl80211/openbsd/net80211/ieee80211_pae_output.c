@@ -99,8 +99,17 @@ ieee80211_send_eapol_key(struct ieee80211com *ic, mbuf_t m,
     
     info = BE_READ_2(key->info);
     /* use V3 descriptor if KDF is SHA256-based */
-    if (ieee80211_is_sha256_akm((enum ieee80211_akm)ni->ni_rsnakms))
-        info |= EAPOL_KEY_DESC_V3;
+    if (ieee80211_is_sha256_akm((enum ieee80211_akm)ni->ni_rsnakms)) {
+        /*
+         * WPA3-Personal sets the "use the AKM" descriptor version (0);
+         * the MIC is AES-CMAC because the AKM is SAE.
+         */
+        if (ieee80211_node_allow_wpa3(ic, ni) &&
+            ni->ni_sae.sae_state == SAE_STATE_ACCEPTED)
+            info |= EAPOL_KEY_DESC_USE_AKM;
+        else
+            info |= EAPOL_KEY_DESC_V3;
+    }
     /* use V2 descriptor if pairwise or group cipher is CCMP */
     else if (ni->ni_rsncipher == IEEE80211_CIPHER_CCMP ||
              ni->ni_rsngroupcipher == IEEE80211_CIPHER_CCMP)
@@ -342,10 +351,17 @@ ieee80211_send_4way_msg2(struct ieee80211com *ic, struct ieee80211_node *ni,
     u_int8_t *frm;
     
     ni->ni_rsn_supp_state = RSNA_SUPP_PTKNEGOTIATING;
-    m = ieee80211_get_eapol_key(MBUF_DONTWAIT, MT_DATA,
-                                (ni->ni_rsnprotos == IEEE80211_PROTO_WPA) ?
-                                2 + IEEE80211_WPAIE_MAXLEN :
-                                2 + IEEE80211_RSNIE_MAXLEN);
+    size_t pktlen;
+    if (ni->ni_rsnprotos == IEEE80211_PROTO_WPA)
+        pktlen = 2 + IEEE80211_WPAIE_MAXLEN;
+    else {
+        pktlen = 2 + IEEE80211_RSNIE_MAXLEN;
+        /* WPA3 must echo the RSNXE in message 2 as well. */
+        if (ieee80211_node_allow_wpa3(ic, ni) &&
+            ni->ni_sae.sae_state == SAE_STATE_ACCEPTED)
+            pktlen += 2 + IEEE80211_RSNXEIE_MAXLEN;
+    }
+    m = ieee80211_get_eapol_key(MBUF_DONTWAIT, MT_DATA, pktlen);
     if (m == NULL)
         return ENOMEM;
     key = mtod(m, struct ieee80211_eapol_key *);
@@ -368,8 +384,12 @@ ieee80211_send_4way_msg2(struct ieee80211com *ic, struct ieee80211_node *ni,
         /* WPA sets the key length field here */
         keylen = ieee80211_cipher_keylen(ni->ni_rsncipher);
         BE_WRITE_2(key->keylen, keylen);
-    } else	/* RSN */
+    } else {	/* RSN */
         frm = ieee80211_add_rsn(frm, ic, ni);
+        if (ieee80211_node_allow_wpa3(ic, ni) &&
+            ni->ni_sae.sae_state == SAE_STATE_ACCEPTED)
+            frm = ieee80211_add_rsnxe_h2e(frm);
+    }
     size_t l = frm - (u_int8_t *)key;
     mbuf_pkthdr_setlen(m, l);
     mbuf_setlen(m, l);

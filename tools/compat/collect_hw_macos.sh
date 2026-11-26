@@ -109,7 +109,7 @@ kmutil showloaded --list-only 2>/dev/null | awk '{print $6, $7}' | grep -v '^com
 
 section "AirDrop-related boot flags"
 for t in $(sysctl -n kern.bootargs 2>/dev/null); do
-    case "$t" in -itlawdl*|itlawdl*|-btleadv*|-ibt*|-lilu*|-btlfx*|-liludbg*) printf '%s ' "$t";; esac
+    case "$t" in -itlawdl*|itlawdl*|-itlsched*|itlsched*|-btleadv*|-ibt*|-lilu*|-btlfx*|-liludbg*) printf '%s ' "$t";; esac
 done
 echo
 

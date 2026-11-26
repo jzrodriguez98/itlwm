@@ -498,6 +498,12 @@ ieee80211_eapol_key_mic(struct ieee80211_eapol_key *key, const u_int8_t *kck)
         memcpy(key->mic, digest, EAPOL_KEY_MIC_LEN);
         break;
     case EAPOL_KEY_DESC_V3:
+    case EAPOL_KEY_DESC_USE_AKM:
+        /*
+         * SAE uses descriptor version 0 ("use the AKM") and AES-CMAC for
+         * the MIC, just like V3.  OWE is not supported here, and it is the
+         * only other AKM that selects version 0.
+         */
         AES_CMAC_Init(&ctx.cmac);
         AES_CMAC_SetKey(&ctx.cmac, kck);
         AES_CMAC_Update(&ctx.cmac, (u_int8_t *)key, len);
@@ -564,6 +570,7 @@ ieee80211_eapol_key_encrypt(struct ieee80211com *ic,
         break;
     case EAPOL_KEY_DESC_V2:
     case EAPOL_KEY_DESC_V3:
+    case EAPOL_KEY_DESC_USE_AKM:
         if (len < 16 || (len & 7) != 0) {
             /* insert padding */
             n = (len < 16) ? 16 - len : 8 - (len & 7);
@@ -617,6 +624,7 @@ ieee80211_eapol_key_decrypt(struct ieee80211_eapol_key *key,
         return 0;
     case EAPOL_KEY_DESC_V2:
     case EAPOL_KEY_DESC_V3:
+    case EAPOL_KEY_DESC_USE_AKM:
         /* Key Data Length must be a multiple of 8 */
         if (len < 16 + 8 || (len & 7) != 0)
             return 1;

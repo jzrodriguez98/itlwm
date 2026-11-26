@@ -9,15 +9,59 @@
 namespace ItlAWDL {
 constexpr size_t peerTLVPrefixBytes = 24 + 44;  // Election (5), channel sequence (18).
 constexpr size_t peerTLVSuffixBytes = 12;       // Data rate capabilities (7).
+
+// the election result our frames advertise (AWDLElection.hpp): the elected master, the node we
+// sync to, our distance from the master, and the master's metric and counter. Null keeps the old frames.
+struct ElectionAdvert {
+    uint8_t master[6], sync[6];
+    uint32_t height, masterMetric, masterCounter;
+};
+
+// Our own metric and counter as macOS put them in the template's election v2 TLV (24).
+inline bool templateSelfElection(const uint8_t *tlvs, size_t length, uint32_t *selfMetric, uint32_t *selfCounter) {
+    if (!tlvs) return false;
+    for (size_t i = 0; i + 3 <= length;) {
+        const size_t n = size_t(tlvs[i + 1]) | size_t(tlvs[i + 2]) << 8;
+        if (i + 3 + n > length) return false;
+        if (tlvs[i] == 24 && n >= 40) {
+            if (selfMetric) *selfMetric = read32(tlvs + i + 3 + 24);
+            if (selfCounter) *selfCounter = read32(tlvs + i + 3 + 36);
+            return true;
+        }
+        i += 3 + n;
+    }
+    return false;
+}
+// our election ID as macOS put it in the template's election v2 TLV (offset 28).
+inline bool templateSelfElectionId(const uint8_t *tlvs, size_t length, uint32_t *electionId) {
+    if (!tlvs || !electionId) return false;
+    for (size_t i = 0; i + 3 <= length;) {
+        const size_t n = size_t(tlvs[i + 1]) | size_t(tlvs[i + 2]) << 8;
+        if (i + 3 + n > length) return false;
+        if (tlvs[i] == 24 && n >= 40) {
+            *electionId = read32(tlvs + i + 3 + 28);
+            return true;
+        }
+        i += 3 + n;
+    }
+    return false;
+}
 // Adds TLVs 5 and 18 before the native template's TLVs and 7 after them. Our
 // metric comes from the template's election v2 TLV, so both TLVs agree and this
 // claims nothing the template doesn't. Nothing is written unless all checks pass.
 // `channelClass` 0 picks the 20 MHz class for `channel`. 128 is the 80 MHz class, as a phone sends.
 // `twoStreams` advertises MCS 8 to 15 as well, matching the HT capabilities the driver reports to macOS with
 // -itlawdlcaps (dedicated mode's VHT runs had both).
+// `slots`, null by default: the 16 channels of the schedule the radio really follows, advertised
+// in TLV 18 instead of `channel` sixteen times. Each must be a fixed-schedule channel; entries on `channel` keep
+// `channelClass`, the others get their 20 MHz class.
 inline bool extendWithPeerTLVs(uint8_t *tlvs, size_t *length, size_t capacity, const uint8_t *address, uint8_t channel = 6,
-                               uint8_t channelClass = 0, bool twoStreams = false) {
+                               uint8_t channelClass = 0, bool twoStreams = false, const uint8_t *slots = nullptr,
+                               const ElectionAdvert *election2 = nullptr) {
     if (!tlvs || !length || !address) return false;
+    if (slots)
+        for (unsigned i = 0; i < 16; ++i)
+            if (!fixedScheduleChannel(slots[i])) return false;
     // A channel outside the fixed-schedule list can't be described, so nothing is added. An explicit
     // class must be the channel's 20 MHz class, or 128 (80 MHz) for a 5 GHz channel.
     if (!fixedScheduleChannel(channel)) return false;
@@ -42,12 +86,23 @@ inline bool extendWithPeerTLVs(uint8_t *tlvs, size_t *length, size_t capacity, c
     const size_t suffix = nativeRates ? 0 : peerTLVSuffixBytes;
     if (!election || capacity - old < peerTLVPrefixBytes + suffix) return false;
     const uint32_t metric = read32(election + 24);
+    if (election2) {
+        // macOS's election v2 TLV gets the elected master, our sync node, the master's counter,
+        // our distance and the master's metric; our own metric and counter stay as macOS set them.
+        uint8_t *v = const_cast<uint8_t *>(election);
+        for (unsigned i = 0; i < 6; ++i) { v[i] = election2->master[i]; v[6 + i] = election2->sync[i]; }
+        write32(v + 12, election2->masterCounter);
+        write32(v + 16, election2->height);
+        write32(v + 20, election2->masterMetric);
+    }
     for (size_t i = old; i > 0; --i) tlvs[i - 1 + peerTLVPrefixBytes] = tlvs[i - 1];
     uint8_t *p = tlvs;
     for (size_t i = 0; i < peerTLVPrefixBytes; ++i) p[i] = 0;
     p[0] = 5; write16(p + 1, 21);
-    for (unsigned i = 0; i < 6; ++i) p[3 + 5 + i] = address[i];
-    write32(p + 3 + 11, metric);
+    const uint8_t *top = election2 ? election2->master : address;
+    for (unsigned i = 0; i < 6; ++i) p[3 + 5 + i] = top[i];
+    if (election2) p[3 + 3] = uint8_t(election2->height > 0xff ? 0xff : election2->height);
+    write32(p + 3 + 11, election2 ? election2->masterMetric : metric);
     write32(p + 3 + 15, metric);
     p += 24;
     // Sixteen slots of our channel, matching the schedule in our sync TLV. Byte two
@@ -57,7 +112,11 @@ inline bool extendWithPeerTLVs(uint8_t *tlvs, size_t *length, size_t capacity, c
     const uint8_t header[6] = {15, 3, 0, 3, 0xff, 0xff};
     for (unsigned i = 0; i < 6; ++i) p[3 + i] = header[i];
     const uint8_t opClass = channelClass ? channelClass : globalOperatingClass20(channel);
-    for (unsigned i = 0; i < 16; ++i) { p[9 + 2*i] = channel; p[10 + 2*i] = opClass; }
+    for (unsigned i = 0; i < 16; ++i) {
+        const uint8_t slot = slots ? slots[i] : channel;
+        p[9 + 2*i] = slot;
+        p[10 + 2*i] = slot == channel ? opClass : globalOperatingClass20(slot);
+    }
     if (nativeRates) {
         *length = old + peerTLVPrefixBytes;
         return true;
@@ -94,7 +153,8 @@ inline bool masterIndicationWellFormed(const uint8_t *source, size_t length) {
 }
 inline bool buildMasterIndicationTLVs(const uint8_t *source, size_t length, const uint8_t *address,
                                       uint8_t *output, size_t capacity, size_t *written, uint8_t channel = 6,
-                                      uint8_t channelClass = 0, bool twoStreams = false) {
+                                      uint8_t channelClass = 0, bool twoStreams = false,
+                                      const uint8_t *slots = nullptr, const ElectionAdvert *election2 = nullptr) {
     if (!source || !address || !output || !written || !length) return false;
     size_t used = 0;
     for (size_t offset = 0; offset < length;) {
@@ -109,7 +169,7 @@ inline bool buildMasterIndicationTLVs(const uint8_t *source, size_t length, cons
         }
         offset += 3 + count;
     }
-    if (!extendWithPeerTLVs(output, &used, capacity, address, channel, channelClass, twoStreams)) return false;
+    if (!extendWithPeerTLVs(output, &used, capacity, address, channel, channelClass, twoStreams, slots, election2)) return false;
     *written = used;
     return true;
 }

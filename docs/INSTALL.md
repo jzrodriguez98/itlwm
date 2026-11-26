@@ -1,6 +1,6 @@
 # Installing the AirDrop AirportItlwm build
 
-This beta has been tested on one hackintosh: an HP Envy x360 13-bf with an Intel AX211, on macOS 26.7.1 (25G241), booted with OpenCore 1.0.8, with an iPhone 11. Users report it working on 26.7.2 (25G332) and 26.7.3 (25G342). The Sequoia build (15.8.x) was verified offline. Users report Wi-Fi working on it. AirDrop needs 0.5.1-test1 or later; users confirmed it working on 15.8.1, 15.8.2, 15.8.3 and 15.6. The Sonoma build (14.8.9, test build) was verified offline only. The details are in [TESTED-HARDWARE.md](TESTED-HARDWARE.md). Read the whole page before you start.
+This beta has been tested on one hackintosh: an HP Envy x360 13-bf with an Intel AX211, on macOS 26.7.1 (25G241), booted with OpenCore 1.0.8, with an iPhone 11. Users report it working on 26.7.2 (25G332) and 26.7.3 (25G342). The Sequoia build (15.8 and 15.8.3) was verified offline. Users report Wi-Fi working on it. AirDrop needs 0.5.1-test1 or later; users confirmed it working on 15.8.1, 15.8.2, 15.8.3 and 15.6, on 15.8.1 and 15.8.2 before 0.6.0-beta.1. The Sonoma build (14.8.9, test build) was verified offline, and one user reports AirDrop working on it; it hasn't been tested on the project's hackintosh. The details are in [TESTED-HARDWARE.md](TESTED-HARDWARE.md). Read the whole page before you start.
 
 ## Before you start
 
@@ -25,7 +25,13 @@ This beta has been tested on one hackintosh: an HP Envy x360 13-bf with an Intel
 | `IntelBluetoothFirmware.kext` | [OpenIntelWireless/IntelBluetoothFirmware](https://github.com/OpenIntelWireless/IntelBluetoothFirmware) | Tested with 2.5.1 |
 | `BlueToolFixup.kext` | [acidanthera/BrcmPatchRAM](https://github.com/acidanthera/BrcmPatchRAM) | Tested with 2.7.3 |
 
-**Important naming note:** This branch outputs its Bluetooth plugin as `IntelBTPatcher.kext`, but it is the upstream BTLEAdvFixup 0.9.4 implementation, not the original IntelBTPatcher code. Its bundle ID is `org.forbiddenitlwm.IntelBTPatcher` to distinguish it. Remove/disable the original IntelBTPatcher kext (`com.zxystd.IntelBTPatcher`) and do not load IntelBTUnified, which includes that same hook; Lilu cannot safely load both implementations. Keep IntelBluetoothFirmware and BlueToolFixup enabled.
+**Important naming note:** This branch outputs its Bluetooth plugin as `IntelBTPatcher.kext`, but it is the upstream BTLEAdvFixup 0.9.8 implementation, not the original IntelBTPatcher code. Its bundle ID is `org.forbiddenitlwm.IntelBTPatcher` to distinguish it. Remove/disable the original IntelBTPatcher kext (`com.zxystd.IntelBTPatcher`) and do not load IntelBTUnified, which includes that same hook; Lilu cannot safely load both implementations. Keep IntelBluetoothFirmware and BlueToolFixup enabled.
+
+**Add `-btleadv` to `boot-args`.** BTLEAdvFixup does nothing without it, and then:
+- **AirDrop doesn't work:** the Mac can't advertise over Bluetooth LE, which is how iPhones and other Macs find it first.
+- **New Bluetooth LE mice and keyboards may never finish pairing** ([#110](https://github.com/retropineaple/ForbiddenItlwm/issues/110)), since IntelBTPatcher's fix for them is off too.
+
+If you only want the Wi-Fi driver and don't use `-btleadv`, leave BTLEAdvFixup out and keep IntelBTPatcher enabled (or use IntelBTUnified instead of IntelBluetoothFirmware and IntelBTPatcher), as with AirportItlwm.
 
 ## Building
 
@@ -101,7 +107,7 @@ All of this goes on the **USB stick's** EFI.
 
    Make sure the original IntelBTPatcher entry is removed and that exactly one `AirportItlwm.kext` and this branch's `IntelBTPatcher.kext` are enabled. Keep the fork-built IntelBTPatcher bundle after BlueToolFixup.
 
-3. **Boot arguments:** add the flags from [BOOT-FLAGS.md](BOOT-FLAGS.md) to `boot-args` under `NVRAM` → `Add` → `7C436110-AB2A-4BBB-A880-FE41995C9F82`. Keep your existing arguments. Because OpenCore only writes NVRAM keys listed under `Delete`, check that `boot-args` is listed there for the same GUID.
+3. **Boot arguments:** from 0.7.0-alpha.2 add `-btleadv`; the driver turns AirDrop's other flags on by itself, and flags left over from an older release do no harm. Up to 0.7.0-alpha.1, add the whole tested set from [BOOT-FLAGS.md](BOOT-FLAGS.md#up-to-070-alpha1-the-tested-set). Add them to `boot-args` under `NVRAM` → `Add` → `7C436110-AB2A-4BBB-A880-FE41995C9F82`. Keep your existing arguments. Because OpenCore only writes NVRAM keys listed under `Delete`, check that `boot-args` is listed there for the same GUID. The experimental flags in BOOT-FLAGS are optional, for testers, and work only from 0.7.0-alpha.1. macOS ignores `boot-args` longer than 1023 characters, so keep the line shorter than that.
 
 4. **Validate:** `plutil -lint config.plist`, and `ocvalidate` if you have it.
 
@@ -115,7 +121,7 @@ All of this goes on the **USB stick's** EFI.
    ioreg -l -w0 | grep -E '"ItlwmAWDL(InterfaceBuild|BuildCheck)"|"ITLAWDLCoex(Added|Channel|CountryLearned)"'
    ```
 
-   You should see `forbidden-0.6.0-beta.4` (`forbidden-0.6.0-beta.4-sequoia` on Sequoia, `forbidden-0.6.0-beta.4-sonoma` on Sonoma), `BuildCheck` `verified`, `Added` Yes, `Channel` 149 (or 44 where your iPhone uses 44, for example in Japan) and `CountryLearned` Yes. `Channel` 6 means the firmware hasn't opened 149 or 44: see [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
+   You should see `forbidden-0.7.0-alpha.4` (`forbidden-0.7.0-alpha.4-sequoia` on Sequoia, `forbidden-0.7.0-alpha.4-sonoma` on Sonoma), `BuildCheck` `verified`, `Added` Yes, `Channel` 149 (or 44 where your iPhone uses 44, for example in Japan) and `CountryLearned` Yes. `Channel` 6 means the firmware hasn't opened 149 or 44: see [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
 
 4. Or run `bash tools/compat/check_compat.sh` again. It now also reads the listener's state.
 5. Turn on AirDrop on both devices. Contacts Only works when the iPhone and the Mac share an Apple Account or know each other as contacts. Otherwise use Everyone for 10 Minutes.
@@ -130,7 +136,8 @@ Boot once without `-btleadv` (or with this branch's IntelBTPatcher disabled), th
 On the stick (or your EFI, if you moved it there):
 1. Remove the test `AirportItlwm.kext` and `IntelBTPatcher.kext`, and their `Kernel` → `Add` entries.
 2. Put `AirportItlwm.kext` back.
-3. Remove the `-itlawdl*`, `itlawdl*` and `-btleadv` boot flags.
-4. Reboot.
+3. Put your Bluetooth setup back as it was, for example re-enable `IntelBTPatcher.kext` if you used it: BTLEAdvFixup took over its fixes.
+4. Remove the `-itlawdl*`, `itlawdl*`, `itlsched*`, `-itlsched*`, `itlsim*`, `-itlsim*` and `-btleadv*` boot flags.
+5. Reboot.
 
 The driver writes nothing to disk. IntelBTPatcher (the renamed BTLEAdvFixup implementation) patches `bluetoothd` in memory only.

@@ -142,11 +142,20 @@ ieee80211_eapol_key_input(struct ieee80211com *ic, mbuf_t m,
     
     /* discard EAPOL-Key frames with an unknown descriptor version */
     desc = info & EAPOL_KEY_VERSION_MASK;
-    if (desc < EAPOL_KEY_DESC_V1 || desc > EAPOL_KEY_DESC_V3)
+    if (ieee80211_node_allow_wpa3(ic, ni) &&
+        ni->ni_sae.sae_state == SAE_STATE_ACCEPTED) {
+        /*
+         * WPA3-Personal uses descriptor version 0 ("use the AKM's MIC"),
+         * which maps to AES-CMAC just like V3.
+         */
+        if (desc != EAPOL_KEY_DESC_USE_AKM)
+            goto done;
+    } else if (desc < EAPOL_KEY_DESC_V1 || desc > EAPOL_KEY_DESC_V3)
         goto done;
     
     if (ieee80211_is_sha256_akm((enum ieee80211_akm)ni->ni_rsnakms)) {
-        if (desc != EAPOL_KEY_DESC_V3)
+        if (desc != EAPOL_KEY_DESC_V3 &&
+            desc != EAPOL_KEY_DESC_USE_AKM)
             goto done;
     } else if (ni->ni_rsncipher == IEEE80211_CIPHER_CCMP ||
                ni->ni_rsngroupcipher == IEEE80211_CIPHER_CCMP) {
@@ -267,6 +276,10 @@ ieee80211_recv_4way_msg1(struct ieee80211com *ic,
             return;
         }
         memcpy(ni->ni_pmk, pmk->pmk_key, IEEE80211_PMK_LEN);
+    } else if (ieee80211_node_allow_wpa3(ic, ni) &&
+        ni->ni_sae.sae_state == SAE_STATE_ACCEPTED) {
+        /* SAE completed the commit/confirm exchange and derived the PMK. */
+        memcpy(ni->ni_pmk, ni->ni_sae.sae_pmk, IEEE80211_PMK_LEN);
     } else    /* use pre-shared key */
         memcpy(ni->ni_pmk, ic->ic_psk, IEEE80211_PMK_LEN);
     ni->ni_flags |= IEEE80211_NODE_PMK;
@@ -385,7 +398,7 @@ ieee80211_recv_4way_msg3(struct ieee80211com *ic,
     struct ieee80211_ptk tptk;
     struct ieee80211_key *k;
     const u_int8_t *frm, *efrm;
-    const u_int8_t *rsnie1, *rsnie2, *gtk, *igtk;
+    const u_int8_t *rsnie1, *rsnie2, *rsnxe, *gtk, *igtk;
     u_int16_t info, reason = 0;
     int keylen, deferlink = 0;
     
@@ -448,7 +461,7 @@ ieee80211_recv_4way_msg3(struct ieee80211com *ic,
      * RSN IEs in message 3/4.  We only take into account the IE of the
      * version of the protocol we negotiated at association time.
      */
-    rsnie1 = rsnie2 = gtk = igtk = NULL;
+    rsnie1 = rsnie2 = rsnxe = gtk = igtk = NULL;
     while (frm + 2 <= efrm) {
         if (frm + 2 + frm[1] > efrm)
             break;
@@ -461,6 +474,9 @@ ieee80211_recv_4way_msg3(struct ieee80211com *ic,
                 else if (rsnie2 == NULL)
                     rsnie2 = frm;
                 /* ignore others if more than two RSN IEs */
+                break;
+            case IEEE80211_ELEMID_RSNXE:
+                rsnxe = frm;
                 break;
             case IEEE80211_ELEMID_VENDOR:
                 if (frm[1] < 4)
@@ -503,6 +519,21 @@ ieee80211_recv_4way_msg3(struct ieee80211com *ic,
     if (igtk != NULL && gtk == NULL) {
         DPRINTF(("IGTK KDE found but GTK KDE missing\n"));
         return;
+    }
+    /*
+     * WPA3-Personal mandates management frame protection, so message 3
+     * must carry the IGTK KDE and echo the RSNXE we saw before joining.
+     */
+    if (ieee80211_node_allow_wpa3(ic, ni) && igtk == NULL) {
+        reason = IEEE80211_REASON_AUTH_LEAVE;
+        goto deauth;
+    }
+    if (ieee80211_node_allow_wpa3(ic, ni) && ni->ni_sae.sae_h2e &&
+        (rsnxe == NULL ||
+         !ieee80211_rsnxe_matches(ni->ni_rsnxe, ni->ni_rsnxe_len,
+             rsnxe, (size_t)rsnxe[1] + 2))) {
+        reason = IEEE80211_REASON_AUTH_LEAVE;
+        goto deauth;
     }
     /* check that the Install bit is set if using pairwise keys */
     if (ni->ni_rsncipher != IEEE80211_CIPHER_USEGROUP &&
@@ -667,6 +698,10 @@ ieee80211_recv_4way_msg3(struct ieee80211com *ic,
             /* install the IGTK */
             switch ((*ic->ic_set_key)(ic, ni, k)) {
                 case 0:
+                    /* 802.11w protection becomes active for MMPDUs now. */
+                    ni->ni_flags |= IEEE80211_NODE_TXMGMTPROT;
+                    ni->ni_flags |= IEEE80211_NODE_RXMGMTPROT;
+                    ic->ic_igtk_kid = kid;
                     break;
                 case EBUSY:
                     deferlink = 1;
@@ -675,6 +710,8 @@ ieee80211_recv_4way_msg3(struct ieee80211com *ic,
                     reason = IEEE80211_REASON_AUTH_LEAVE;
                     goto deauth;
             }
+        } else {
+            ic->ic_igtk_kid = kid;
         }
     }
     if (info & EAPOL_KEY_INSTALL)
@@ -958,12 +995,19 @@ ieee80211_recv_rsn_group_msg1(struct ieee80211com *ic,
             /* install the IGTK */
             switch ((*ic->ic_set_key)(ic, ni, k)) {
                 case 0:
+                    /* a group-key update also (re)enables 802.11w */
+                    ni->ni_flags |= IEEE80211_NODE_TXMGMTPROT;
+                    ni->ni_flags |= IEEE80211_NODE_RXMGMTPROT;
+                    ic->ic_igtk_kid = kid;
+                    break;
                 case EBUSY:
                     break;
                 default:
                     reason = IEEE80211_REASON_AUTH_LEAVE;
                     goto deauth;
             }
+        } else {
+            ic->ic_igtk_kid = kid;
         }
     }
     if (info & EAPOL_KEY_SECURE) {

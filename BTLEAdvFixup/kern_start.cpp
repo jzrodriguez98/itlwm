@@ -22,7 +22,11 @@
 // Patches bluetoothd's pages as they're validated, the same way BlueToolFixup does.
 // Lilu's onProcLoad route was tried first and didn't apply to this process.
 static mach_vm_address_t orig_cs_validate {};
+// bluetoothd pages validated again while still patched, given their original bytes for the check (#62).
+static uint32_t revalidations {};
 static bool patchScanning {};
+// Experimental, off by default: -btleadvnodupfilter turns bluetoothd's scan duplicate filter off.
+static bool patchDuplicateFilter {};
 
 // The original bytes of every bluetoothd page a kext patched, for APFS's integrity check (BTLEAdvVerify.hpp, #62).
 // This hook sees BlueToolFixup's patches too when it runs outside BlueToolFixup's, that is when BTLEAdvFixup loads
@@ -45,18 +49,31 @@ static void patched_cs_validate_page(vnode_t vp, memory_object_t pager, memory_o
     }
     // The page as it came from disk, before any hook in the chain changes it.
     const bool keep = data && patchedPages && pageScratch && pagesLock;
+    // A page validated again while it still holds its patches (#62, "Code Signature Invalid"): it gets its original
+    // bytes back for the check, and its patches again after it.
+    const BTLEAdv::PatchedPage *again = nullptr;
     if (keep) {
         IOLockLock(pagesLock);
+        if (bluetoothdVnode == vp && bluetoothdVid == vnode_vid(vp))
+            again = BTLEAdv::patchedPageAt(*patchedPages, page_offset, static_cast<const uint8_t *>(data));
+        if (again) {
+            memcpy(const_cast<void *>(data), again->original, PAGE_SIZE);
+            __atomic_add_fetch(&revalidations, 1, __ATOMIC_RELAXED);
+        }
         memcpy(pageScratch, data, PAGE_SIZE);
     }
     FunctionCast(patched_cs_validate_page, orig_cs_validate)(vp, pager, page_offset, data, validated_p, tainted_p, nx_p);
     // Each set only matches its own bluetoothd build; on any other build nothing changes.
     for (const auto &patch : BTLEAdv::kPatches)
-        if (!patch.scanningOnly || patchScanning)
+        if ((!patch.scanningOnly || patchScanning) && (!patch.dupFilter || patchDuplicateFilter))
             KernelPatcher::findAndReplace(const_cast<void *>(data), PAGE_SIZE, patch.find, patch.size,
                                           patch.replace, patch.size);
     if (!keep)
         return;
+    // Every recorded patch back, BlueToolFixup's included when its hook isn't in this chain. Only after a validation
+    // that passed: a page that failed keeps the bytes it was checked with.
+    if (again && validated_p && *validated_p && !(tainted_p && *tainted_p))
+        memcpy(const_cast<void *>(data), again->patched, PAGE_SIZE);
     // A new vnode for the file has its own pages: the old records don't apply to it.
     const uint32_t vid = vnode_vid(vp);
     if (bluetoothdVnode != vp || bluetoothdVid != vid) {
@@ -112,7 +129,7 @@ static IOReturn patched_device_request(void *that, IOService *provider, Standard
                                        IOUSBHostCompletion *completion, uint32_t timeout);
 
 // Evidence for tests, in the I/O Registry root. Set only on rare events, in thread context.
-static uint32_t extraCommands {}, setAddresses {}, extraFailures {};
+static uint32_t extraCommands {}, setAddresses {}, extraFailures {}, enableAddresses {};
 static BTLEAdv::PrivacyStats privacyStats {};   // under hciLock
 static bool privacyChanged {};
 static void noteHook(const char *key, uint32_t value) {
@@ -140,6 +157,7 @@ struct VerifyArgs {
 };
 static mach_vm_address_t orig_apfs_verify {};
 static uint32_t verifyRescues {}, verifyRescueFailures {};
+
 static int patched_apfs_verify(VerifyArgs *args) {
     // Only checks of file data: no flags, or the filesystem's own context (VNODE_VERIFY_WITH_CONTEXT).
     if (LIKELY(!args || args->vp != bluetoothdVnode) || !args->buf || !args->bufsize || args->foffset < 0 ||
@@ -181,6 +199,7 @@ static void publishVerify(thread_call_param_t, thread_call_param_t) {
     noteHook("BTLEAdvPatchedPages", count);
     noteHook("BTLEAdvPatchedPagesFull", full);
     noteHook("BTLEAdvVerifyRescues", __atomic_load_n(&verifyRescues, __ATOMIC_RELAXED));
+    noteHook("BTLEAdvVerifyRevalidations", __atomic_load_n(&revalidations, __ATOMIC_RELAXED));
     noteHook("BTLEAdvVerifyRescueFailures", __atomic_load_n(&verifyRescueFailures, __ATOMIC_RELAXED));
 }
 
@@ -269,7 +288,8 @@ static IOReturn patched_device_request(void *that, IOService *provider, Standard
             IOSimpleLockUnlock(lengthLock);
         }
     }
-    if (completion && (remoteReads || legacyScanAddress || action.sendSetAddress || action.sendEventMask))
+    if (completion && (remoteReads || legacyScanAddress || action.sendSetAddress || action.sendEventMask ||
+                       action.beforeCount))
         noteHook("BTLEAdvAsyncSeen", bumpCounter(asyncSeen));
     for (unsigned i = 0; i < remoteReads; ++i) {
         // Sent before the real command, as IntelBTPatcher does: the three completions carry the
@@ -287,6 +307,21 @@ static IOReturn patched_device_request(void *that, IOService *provider, Standard
         uint8_t fixed[9] = {0x05, 0x20, 0x06};
         lilu_os_memcpy(fixed + 3, BTLEAdv::kFixedPatcherAddress, 6);
         sendExtra(that, provider, request, fixed, sizeof(fixed), timeout);
+    }
+    // A set's address again right before its first enable (#102), in order with the enable: sent from this thread
+    // before the enable itself. One that doesn't go out is put back, so the next enable tries again.
+    for (unsigned i = 0; i < action.beforeCount; ++i) {
+        const IOReturn sent = sendExtra(that, provider, request, action.before[i], sizeof(action.before[i]), timeout);
+        if (sent == kIOReturnSuccess) {
+            noteHook("BTLEAdvExtraCommands", ++extraCommands);
+            noteHook("BTLEAdvEnableAddresses", ++enableAddresses);
+        } else {
+            IOLockLock(hciLock);
+            if (hciOwner == that)
+                hciState.checkAtEnable |= 1U << action.beforeHandle[i];
+            IOLockUnlock(hciLock);
+            noteHook("BTLEAdvExtraFailures", ++extraFailures);
+        }
     }
     static bool sawCommand {};
     if (hciLength >= 3 && !sawCommand) {
@@ -511,6 +546,7 @@ PluginConfiguration ADDPR(config) {
             return;
         // Advertising alone, to compare with both.
         patchScanning = !checkKernelArgument("-btlenoscan");
+        patchDuplicateFilter = checkKernelArgument("-btleadvnodupfilter");
         // For the integrity check of bluetoothd's patched pages (#62). Without any of these it stays off and the
         // pages are patched as before.
         pagesLock = IOLockAlloc();

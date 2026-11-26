@@ -1109,11 +1109,21 @@ ieee80211_match_bss(struct ieee80211com *ic, struct ieee80211_node *ni,
         if ((ni->ni_rsnakms & ic->ic_rsnakms) == 0)
             fail |= IEEE80211_NODE_ASSOCFAIL_WPA_PROTO;
         if ((ni->ni_rsnakms & ic->ic_rsnakms &
-             ~(IEEE80211_AKM_PSK | IEEE80211_AKM_SHA256_PSK)) == 0) {
-            /* AP only supports PSK AKMPs */
-            if (!(ic->ic_flags & IEEE80211_F_PSK))
+             ~(IEEE80211_AKM_PSK | IEEE80211_AKM_SHA256_PSK |
+               IEEE80211_AKM_SAE)) == 0) {
+            /* AP only supports PSK/SAE AKMPs */
+            if (!(ic->ic_flags & IEEE80211_F_PSK) &&
+                (ni->ni_rsnakms & ic->ic_rsnakms &
+                 IEEE80211_AKM_SAE) == 0)
                 fail |= IEEE80211_NODE_ASSOCFAIL_WPA_PROTO;
         }
+        /*
+         * A network reachable only through SAE is unusable unless the
+         * -itlwmwpa3 flag, MFP and SAE key material are all in place.
+         */
+        if ((ni->ni_rsnakms & ic->ic_rsnakms) == IEEE80211_AKM_SAE &&
+            !ieee80211_node_allow_wpa3(ic, ni))
+            fail |= IEEE80211_NODE_ASSOCFAIL_WPA_PROTO;
         if (ni->ni_rsngroupcipher != IEEE80211_CIPHER_WEP40 &&
             ni->ni_rsngroupcipher != IEEE80211_CIPHER_TKIP &&
             ni->ni_rsngroupcipher != IEEE80211_CIPHER_CCMP &&
@@ -1257,6 +1267,17 @@ ieee80211_node_join_bss(struct ieee80211com *ic, struct ieee80211_node *selbs, i
     (*ic->ic_node_copy)(ic, ic->ic_bss, selbs);
     ni = ic->ic_bss;
     ni->ni_assoc_fail |= assoc_fail;
+
+    /*
+     * The SAE exchange always starts from scratch for a new join.  Keep
+     * MFP/PBKID flags from the beacon copy but drop stale SAE material.
+     */
+    ni->ni_flags &= ~(IEEE80211_NODE_MFP | IEEE80211_NODE_RXMGMTPROT |
+        IEEE80211_NODE_TXMGMTPROT);
+    ni->ni_flags &= ~IEEE80211_NODE_PMKID;
+    explicit_bzero(ni->ni_pmkid, sizeof(ni->ni_pmkid));
+    explicit_bzero(&ni->ni_sae, sizeof(ni->ni_sae));
+    ni->ni_sae.sae_state = SAE_STATE_NOTHING;
     
     ic->ic_curmode = ieee80211_chan2mode(ic, ni->ni_chan);
     
@@ -1270,6 +1291,41 @@ ieee80211_node_join_bss(struct ieee80211com *ic, struct ieee80211_node *selbs, i
         ieee80211_choose_rsnparams(ic);
     else if (ic->ic_flags & IEEE80211_F_WEPON)
         ni->ni_rsncipher = IEEE80211_CIPHER_USEGROUP;
+
+    /*
+     * SAE derives the password element (PWE) from the password token and
+     * both MAC addresses before the first commit can be built.  Do it here,
+     * synchronously, so authentication can start immediately; a failure
+     * just means we fall back to scanning for another BSS.
+     */
+    if (ieee80211_node_allow_wpa3(ic, ni)) {
+        int error;
+
+        ni->ni_sae.sae_h2e =
+            (ni->ni_rsnxecaps & IEEE80211_RSNXECAP_H2E) ? 1 : 0;
+        if (ieee80211_sae_select_auth(ic, ni, &ic->ic_sae_auth) != 0)
+            error = -1;
+        else if (ni->ni_sae.sae_h2e)
+            error = ieee80211_sae_derive_password_elem(ic->ic_sae_pwe,
+                ic->ic_sae_pt, ic->ic_sae_auth.ownaddr,
+                ic->ic_sae_auth.peeraddr);
+        else
+            error = -1;    /* hunting-and-pecking is not built in */
+        if (error != 0) {
+            explicit_bzero(ic->ic_sae_pwe, sizeof(ic->ic_sae_pwe));
+            ic->ic_sae_pwe_valid = 0;
+            ic->ic_xflags &= ~IEEE80211_F_SAE_PWE;
+            ieee80211_new_state(ic, IEEE80211_S_SCAN, -1);
+            return;
+        }
+        ni->ni_sae.sae_auth = ic->ic_sae_auth;
+        ic->ic_sae_pwe_valid = 1;
+        ic->ic_xflags |= IEEE80211_F_SAE_PWE;
+    } else {
+        explicit_bzero(ic->ic_sae_pwe, sizeof(ic->ic_sae_pwe));
+        ic->ic_sae_pwe_valid = 0;
+        ic->ic_xflags &= ~IEEE80211_F_SAE_PWE;
+    }
     
     ieee80211_node_newstate(selbs, IEEE80211_STA_BSS);
 #ifndef IEEE80211_STA_ONLY
@@ -1597,11 +1653,17 @@ ieee80211_choose_rsnparams(struct ieee80211com *ic)
     /* filter out unsupported AKMPs */
     ni->ni_rsnakms &= ic->ic_rsnakms;
     /*
-     * Prefer SHA-256 based AKMPs only when MFP is supported. These drivers
-     * don't set IEEE80211_C_MFP, so a transition network that offers both
-     * PSK and PSK-SHA256 must be joined with plain PSK.
+     * Prefer SAE when both ends support it: WPA3-Personal requires MFP and,
+     * for the H2E method we implement, a precomputed password token.
+     * Otherwise fall back to SHA-256/plain PSK as before.
      */
-    if ((ic->ic_flags & IEEE80211_F_PSK) && (ni->ni_rsnakms &
+    if (ic->ic_wpa3 && (ni->ni_rsnakms & IEEE80211_AKM_SAE) &&
+        (ni->ni_rsnxecaps & IEEE80211_RSNXECAP_H2E) &&
+        ic->ic_sae_pt_valid &&
+        (ic->ic_caps & IEEE80211_C_MFP) &&
+        (ni->ni_rsncaps & IEEE80211_RSNCAP_MFPC)) {
+        ni->ni_rsnakms = IEEE80211_AKM_SAE;
+    } else if ((ic->ic_flags & IEEE80211_F_PSK) && (ni->ni_rsnakms &
                                              (IEEE80211_AKM_PSK | IEEE80211_AKM_SHA256_PSK))) {
         /* AP supports PSK AKMP and a PSK is configured */
         if ((ni->ni_rsnakms & IEEE80211_AKM_SHA256_PSK) && (ic->ic_caps & IEEE80211_C_MFP))
@@ -1637,6 +1699,31 @@ ieee80211_choose_rsnparams(struct ieee80211com *ic)
     if ((ic->ic_caps & IEEE80211_C_MFP) &&
         (ni->ni_rsncaps & IEEE80211_RSNCAP_MFPC))
         ni->ni_flags |= IEEE80211_NODE_MFP;
+
+}
+
+/*
+ * WPA3-Personal is only used when the caller opted in with the -itlwmwpa3
+ * boot argument, the AP advertises SAE with mandatory PMF, and we have the
+ * material needed to derive the PWE (password token for H2E, password for
+ * the legacy method).
+ */
+int
+ieee80211_node_allow_wpa3(struct ieee80211com *ic,
+    const struct ieee80211_node *ni)
+{
+    if (!ic->ic_wpa3)
+        return 0;
+    if ((ic->ic_flags & IEEE80211_F_RSNON) == 0 ||
+        (ni->ni_rsnprotos & IEEE80211_PROTO_RSN) == 0 ||
+        (ni->ni_rsnxecaps & IEEE80211_RSNXECAP_H2E) == 0 ||
+        !ic->ic_sae_pt_valid ||
+        (ic->ic_caps & IEEE80211_C_MFP) == 0 ||
+        (ni->ni_rsncaps & IEEE80211_RSNCAP_MFPC) == 0 ||
+        (ni->ni_rsnakms & IEEE80211_AKM_SAE) == 0)
+        return 0;
+
+    return 1;
 }
 
 int

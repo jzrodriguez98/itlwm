@@ -33,6 +33,9 @@ constexpr unsigned kPeerDozeMaxEntries = 5;
 struct PeerSyncInfo {
     uint16_t awCounter, downCounterTU, awPeriodTU;
     uint8_t channels[kPeerSeqEntries];
+    // TLV 4's AW extension and common lengths (TU) and presence mode, for the Apple election rules.
+    uint16_t awExtTU, awCommonTU;
+    uint8_t presenceMode;
 };
 
 // Reads the AW counter, down counter and period from TLV 4 and the 16 channels from TLV 18.
@@ -51,6 +54,9 @@ inline bool peerSyncFromAction(const uint8_t *f, size_t length, PeerSyncInfo *ou
             info.downCounterTU = uint16_t(v[1] | v[2] << 8);
             info.awPeriodTU = uint16_t(v[5] | v[6] << 8);
             info.awCounter = uint16_t(v[29] | v[30] << 8);
+            info.awExtTU = uint16_t(v[11] | v[12] << 8);
+            info.awCommonTU = uint16_t(v[13] | v[14] << 8);
+            info.presenceMode = v[27];
             haveSync = v[27] == 4 && info.awPeriodTU >= 8 && info.awPeriodTU <= 64 &&
                        info.downCounterTU <= uint32_t(info.awPeriodTU) * 4;
         } else if (f[i] == 18) {
@@ -165,15 +171,29 @@ struct PeerSchedule {
     bool presentInEntry(uint32_t eaw) const {
         return channels[(eaw + entryOffset()) % kPeerSeqEntries] == ourChannel;
     }
-    // Every frame heard from the peer. Feeds calibration, then checks it.
-    void notePeerFrame(uint64_t t) {
+    // -itlschedsecond: the channel the peer's sequence names at `t`, or 0 when its timing isn't known (no fresh,
+    // known schedule). For sending on a second channel only to the peers that are there now.
+    uint8_t channelAt(uint64_t t) const {
+        if (!known() || !fresh(t) || !eawUS)
+            return 0;
+        uint64_t into = 0;
+        return channels[(eawAt(t, &into) + entryOffset()) % kPeerSeqEntries];
+    }
+    // Every frame heard from the peer. Feeds calibration, then checks it. `heardOn` (-itlschedsecond): the channel
+    // the frame was heard on when it isn't ourChannel (a second-channel visit). Such a frame checks the timing
+    // against the entry naming that channel, and never feeds calibration, whose bins count frames on ourChannel.
+    void notePeerFrame(uint64_t t, uint8_t heardOn = 0) {
         if (!fresh(t) || !eawUS) return;
         uint64_t into = 0;
         const uint32_t eaw = eawAt(t, &into);
         if (into < kPeerEdgeUS || eawUS - into < kPeerEdgeUS) return;
+        const bool elsewhere = heardOn && heardOn != ourChannel;
+        if (elsewhere && !known()) return;
         if (known()) {
             ++checkedFrames;
-            if (!presentInEntry(eaw)) {
+            const bool where = elsewhere ? channels[(eaw + entryOffset()) % kPeerSeqEntries] == heardOn :
+                presentInEntry(eaw);
+            if (!where) {
                 multipleAwayEntries |= awayFrames && lastAwayEntry != eaw;
                 lastAwayEntry = eaw;
                 ++awayFrames;
@@ -191,7 +211,7 @@ struct PeerSchedule {
                 multipleAwayEntries = false;
             }
         }
-        if (!calibrated) {
+        if (!calibrated && !elsewhere) {
             if (binFrames >= 4096) clearEvidence();
             ++bins[eaw % kPeerSeqEntries];
             if (++binFrames >= kPeerCalibrateFrames) calibrate();

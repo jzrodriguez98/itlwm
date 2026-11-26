@@ -3,7 +3,11 @@
 #pragma once
 #include <AWDLFrameBuilder.hpp>
 namespace ItlAWDL {
-struct IPv6PayloadView { const uint8_t *bytes; size_t length; uint16_t sequence; };
+// minExtension and presence are the two bytes after the AWDL LLC header. macOS fills them per
+// frame from its current settings (IO80211 adjustAwdlSnapHeader, 26.7.2: the minimum window
+// extension, then the presence mode), so they're reported, not checked.
+struct IPv6PayloadView { const uint8_t *bytes; size_t length; uint16_t sequence;
+                         uint8_t minExtension, presence; };
 inline bool validIPv6Payload(const uint8_t *p, size_t n) {
     // Initial transport supports a 1500-byte IPv6 MTU and no jumbograms.
     return p && n >= 40 && n <= 1500 && (p[0] >> 4) == 6 &&
@@ -15,6 +19,7 @@ inline BuildResult buildIPv6DataPayload(const uint8_t *ip, size_t length,
         uint16_t sequence, uint8_t *output, size_t available, size_t *written) {
     if (!output || !written || !validIPv6Payload(ip,length)) return BuildResult::Invalid;
     if (available < length+16) return BuildResult::NoSpace;
+    // 3 and 4: the values macOS sends with its default settings.
     const uint8_t prefix[16] = {0xaa,0xaa,3,0,0x17,0xf2,8,0,3,4,0,0,0,0,0x86,0xdd};
     for(unsigned i=0;i<16;++i) output[i]=prefix[i];
     write16(output+10,sequence);
@@ -44,10 +49,9 @@ inline ParseResult parseIPv6DataPayload(const uint8_t *frame, size_t length,
     }
     const uint8_t llc[8]={0xaa,0xaa,3,0,0x17,0xf2,8,0};
     for(unsigned i=0;i<8;++i) if(frame[i]!=llc[i]) return ParseResult::NotAWDL;
-    if (read16(frame+8)!=0x0403 || read16(frame+12)!=0 ||
-        frame[14]!=0x86 || frame[15]!=0xdd) return ParseResult::Unsupported;
+    if (read16(frame+12)!=0 || frame[14]!=0x86 || frame[15]!=0xdd) return ParseResult::Unsupported;
     if (!validIPv6Payload(frame+16,length-16)) return ParseResult::Malformed;
-    *output={frame+16,length-16,read16(frame+10)};
+    *output={frame+16,length-16,read16(frame+10),frame[8],frame[9]};
     return ParseResult::Valid;
 }
 }

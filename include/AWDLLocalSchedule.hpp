@@ -8,14 +8,19 @@
 namespace ItlAWDL {
 // Caller supplies local identity, explicit flags/periods and one monotonic
 // epoch. Never derive our identity or schedule by replaying a received frame.
+// `slots`, null by default: the 16 channels the radio really follows, in place of sixteen copies
+// of nextChannel; each must be a fixed-schedule channel.
 // The 73-byte payload includes the known prefix, presence/counter fields,
 // sixteen identical legacy slots and two zero padding bytes. Channel 149 uses the
 // 5 GHz form of channel 6's 20 MHz flags: 0x2b has the 2.4 GHz band bit, 0x1b the
 // 5 GHz one, as peers' own 5 GHz entries (0x1d) show. Inferred, not from a document.
 inline BuildResult buildLocalFixedSchedule(const SyncPrefix &settings,
         uint64_t epochUS, uint64_t nowUS, uint16_t initialAW,
-        uint8_t *output, size_t available, size_t *written)
+        uint8_t *output, size_t available, size_t *written, const uint8_t *slots = nullptr)
 {
+    if (slots)
+        for (unsigned i = 0; i < 16; ++i)
+            if (!fixedScheduleChannel(slots[i])) return BuildResult::Invalid;
     if (!output || !written || nowUS < epochUS || (initialAW & 3) ||
         !fixedScheduleChannel(settings.nextChannel) ||
         settings.masterChannel != settings.nextChannel ||
@@ -40,8 +45,9 @@ inline BuildResult buildLocalFixedSchedule(const SyncPrefix &settings,
     payload[33] = 15; payload[34] = 1; payload[36] = 3;
     payload[37] = 0xff; payload[38] = 0xff;
     for (unsigned i = 0; i < 16; ++i) {
-        payload[39+2*i] = legacySlotFlags(settings.nextChannel);
-        payload[40+2*i] = settings.nextChannel;
+        const uint8_t slot = slots ? slots[i] : settings.nextChannel;
+        payload[39+2*i] = legacySlotFlags(slot);
+        payload[40+2*i] = slot;
     }
     for (unsigned i = 0; i < 73; ++i) output[i] = payload[i];
     *written = 73;

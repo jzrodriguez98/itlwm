@@ -542,6 +542,18 @@ struct ieee80211com {
 	u_int8_t		ic_globalcnt[EAPOL_KEY_NONCE_LEN];
 	u_int8_t		ic_nonce[EAPOL_KEY_NONCE_LEN];
 	u_int8_t		ic_psk[IEEE80211_PMK_LEN];
+	/*
+	 * WPA3-Personal (SAE) state.  The password token (PT) is derived once
+	 * from password + SSID, the password element (PWE) once per peer, and
+	 * both are cached because each derivation is expensive.  ic_wpa3 is
+	 * 0 unless the -itlwmwpa3 boot argument enabled SAE.
+	 */
+	u_int8_t		ic_sae_pt[IEEE80211_SAE_MAX_ECC_PRIME_LEN * 2];
+	u_int8_t		ic_sae_pwe[IEEE80211_SAE_MAX_ECC_PRIME_LEN * 2];
+	struct ieee80211_sae_auth ic_sae_auth;
+	int			ic_sae_pt_valid;
+	int			ic_sae_pwe_valid;
+	int			ic_wpa3;
 	CTimeout*		ic_rsn_timeout;
 	int			ic_tkip_micfail;
 	u_int64_t		ic_tkip_micfail_last_tsc;
@@ -664,6 +676,7 @@ struct ieee80211_ess {
 
 /* ic_xflags */
 #define	IEEE80211_F_TX_MGMT_ONLY 0x00000001	/* leave data frames on ifq */
+#define	IEEE80211_F_SAE_PWE	 0x00000002	/* STATUS: SAE PWE set */
 
 /* ic_caps */
 #define	IEEE80211_C_WEP		0x00000001	/* CAPABILITY: WEP available */
@@ -712,6 +725,34 @@ struct ieee80211_beacon_event {
     size_t frame_length;
 };
 #endif
+
+/*
+ * SAE commits are bound to the pair of MAC addresses that derived them.
+ * This driver never uses MLD/multi-link addressing, so the addresses are
+ * simply our own address and the peer's address.
+ */
+static inline int
+ieee80211_sae_select_auth(const struct ieee80211com *ic,
+    const struct ieee80211_node *ni, struct ieee80211_sae_auth *auth)
+{
+	memset(auth, 0, sizeof(*auth));
+	IEEE80211_ADDR_COPY(auth->ownaddr, ic->ic_myaddr);
+	IEEE80211_ADDR_COPY(auth->peeraddr, ni->ni_macaddr);
+	return 0;
+}
+
+static inline int
+ieee80211_sae_auth_current(const struct ieee80211com *ic,
+    const struct ieee80211_node *ni)
+{
+	struct ieee80211_sae_auth auth;
+
+	return ieee80211_sae_select_auth(ic, ni, &auth) == 0 &&
+	    memcmp(&auth, &ic->ic_sae_auth, sizeof(auth)) == 0 &&
+	    memcmp(&auth, &ni->ni_sae.sae_auth, sizeof(auth)) == 0 &&
+	    (ni->ni_sae.sae_state == SAE_STATE_NOTHING ||
+	    IEEE80211_ADDR_EQ(ni->ni_sae.sae_ownaddr, ic->ic_myaddr));
+}
 
 
 void	ieee80211_ifattach(struct _ifnet *, IOEthernetController *controller);

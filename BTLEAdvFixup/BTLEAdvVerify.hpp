@@ -74,6 +74,20 @@ inline bool holdsPatchedBytes(const PatchedPages &pages, uint64_t foffset, const
     return false;
 }
 
+// The recorded page at `offset` when `data` holds it exactly as the patches left it, else null. macOS can validate a
+// page it already has in memory again (#62, the "Code Signature Invalid" kills): the patched bytes then don't match
+// the code signature and bluetoothd is killed. Validation has to see the original bytes instead.
+inline const PatchedPage *patchedPageAt(const PatchedPages &pages, uint64_t offset, const uint8_t *data) {
+    if (!data)
+        return nullptr;
+    for (size_t i = 0; i < pages.count; i++) {
+        const PatchedPage &p = pages.page[i];
+        if (p.offset == offset && memcmp(p.original, p.patched, kVerifyPage) && !memcmp(data, p.patched, kVerifyPage))
+            return &p;
+    }
+    return nullptr;
+}
+
 // In a copy of the buffer, puts back the original bytes of every recorded page found with its patches.
 // Returns how many pages it put back.
 inline size_t restoreOriginalBytes(const PatchedPages &pages, uint64_t foffset, uint8_t *copy, size_t size) {

@@ -8,14 +8,43 @@
 //     still has the expected functions at spread-out anchor slots, its own pure methods where
 //     expected, and ends where expected (568 slots on Tahoe, 563 on Sequoia, 547 on Sonoma). This catches a changed
 //     table on any build.
-//  -itlawdlanybuild skips check 1 (never check 2). When AWDL may not start, the driver behaves like
-//  plain AirportItlwm: normal Wi-Fi works and nothing AWDL-related is created or sent.
+//  -itlawdlanybuild skips check 1 (never check 2), and -itlawdloff fails both. When AWDL may not start, the driver
+//  behaves like plain AirportItlwm: normal Wi-Fi works and nothing AWDL-related is created or sent.
 //
 
 #include <IOKit/IOLib.h>
 #include <libkern/version.h>
 #include <sys/sysctl.h>
 #include <AWDLBuildGuard.hpp>
+
+// From 0.7.0-alpha.2 the tested set (docs/BOOT-FLAGS.md) is on by default. Each of its flags is still read, so
+// boot-args from older releases keep working and change nothing. -itlawdlnodefaults goes back to the old rule:
+// only the flags that are set count, and with none the driver behaves like AirportItlwm.
+bool itlAWDLDefaults()
+{
+    static int cached = -1;
+    if (cached < 0) {
+        int dummy = 0;
+        cached = PE_parse_boot_argn("-itlawdlnodefaults", &dummy, sizeof(dummy)) ? 0 : 1;
+    }
+    return cached == 1;
+}
+
+// One flag of the tested set: on by default, or when set. The same name with "no" after "-itlawdl" turns that one
+// flag off (-itlawdlnocoexmulti for -itlawdlcoexmulti), and wins over the flag itself.
+bool itlAWDLFlag(const char *name)
+{
+    int dummy = 0;
+    static const char prefix[] = "-itlawdl";
+    const size_t prefixLength = sizeof(prefix) - 1;
+    if (name && !strncmp(name, prefix, prefixLength)) {
+        char off[64];
+        if (snprintf(off, sizeof(off), "-itlawdlno%s", name + prefixLength) < int(sizeof(off)) &&
+            PE_parse_boot_argn(off, &dummy, sizeof(dummy)))
+            return false;
+    }
+    return itlAWDLDefaults() || PE_parse_boot_argn(name, &dummy, sizeof(dummy));
+}
 
 #if !defined(ITL_AWDL_NATIVE)
 // A target without the AirDrop port: the driver is plain Wi-Fi, and nothing here
@@ -49,6 +78,7 @@ struct Anchor { unsigned slot; uintptr_t expected; };
 int gAllowed = -1;
 bool gVerified = false;
 bool gForced = false;   // allowed only because of -itlawdlanybuild
+bool gAnyBuild = false; // -itlawdlanybuild is set
 const char *gStatus = "not-checked";
 
 bool vtableMatches()
@@ -106,7 +136,15 @@ bool itlAWDLBuildAllowed()
     if (gAllowed >= 0)
         return gAllowed == 1;
     int dummy = 0;
+    // From 0.7.0-alpha.2: AirDrop off whatever else is set, so the driver behaves like AirportItlwm.
+    if (PE_parse_boot_argn("-itlawdloff", &dummy, sizeof(dummy))) {
+        gStatus = "off: -itlawdloff";
+        gAllowed = 0;
+        IOLog("ForbiddenItlwm: AirDrop %s\n", gStatus);
+        return false;
+    }
     const bool anyBuild = PE_parse_boot_argn("-itlawdlanybuild", &dummy, sizeof(dummy));
+    gAnyBuild = anyBuild;
     const ItlAWDL::BuildCheck build = ItlAWDL::checkBuild(version, nullptr);
     if (!vtableMatches()) {
         gStatus = "blocked: IO80211AWDLProtocol table differs";
@@ -139,13 +177,19 @@ bool itlAWDLBuildAllowed()
 // gVerified only says the kernel is on the list. The macOS build must pair with it too (audit P-A08);
 // kern.osversion can still be empty when the driver starts, so it's read here, when first needed (the
 // peer manager's start), and the answer kept once the build is known.
-// True when AirDrop runs only because the tester set -itlawdlanybuild on a build the driver hasn't verified.
-// From 0.6.0-beta.2 the master indication is sent there too, so the build can be tested for real; its request
-// layout is then unchecked, the risk the flag already carries (BOOT-FLAGS).
+// True when -itlawdlanybuild is set and AirDrop runs on a build the list doesn't verify as a pair: an unknown
+// kernel (allowed only by the flag), an "expected" Sequoia kernel, or a listed kernel with an unlisted macOS build.
+// The flag then makes the build behave like a verified one: the master indication copy (from 0.6.0-beta.2, unknown
+// kernels only; now all three cases) and the AirDrop packet counters run too. Both keep their runtime checks: the
+// copy's pointer is range-checked and the copy validated, and the counters only write once getPeerManager()
+// returns a real IO80211AWDLPeerManager (its vtable). The layouts behind them are otherwise unchecked, the risk
+// the flag carries (BOOT-FLAGS).
+bool itlAWDLBuildVerified();
 bool itlAWDLBuildForced()
 {
-    itlAWDLBuildAllowed();
-    return gForced;
+    if (!itlAWDLBuildAllowed())
+        return false;
+    return gForced || (gAnyBuild && !itlAWDLBuildVerified());
 }
 
 bool itlAWDLBuildVerified()
@@ -164,7 +208,8 @@ bool itlAWDLBuildVerified()
     if (!pairVerified) {
         snprintf(statusText, sizeof(statusText), "allowed: kernel verified, macOS build %s not verified", osBuild);
         gStatus = statusText;
-        IOLog("AirportItlwm: AirDrop %s; the master indication copy stays off\n", gStatus);
+        IOLog("AirportItlwm: AirDrop %s; the master indication copy and packet counters %s\n", gStatus,
+              gAnyBuild ? "run anyway (-itlawdlanybuild)" : "stay off");
     }
     return pairVerified == 1;
 }

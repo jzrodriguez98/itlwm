@@ -6,13 +6,22 @@
 // accept the risk of a kernel panic.
 //
 // Each macOS version has its own kext and its own list.
-// Tahoe: 25G241 on hardware; 25G332 and 25G342 offline, from Apple's Kernel Debug Kits
+// Tahoe: 25G241 on hardware; 25G229, 25G330, 25G332 and 25G342 offline, from Apple's Kernel Debug Kits
 // (IOSkywalkFamily identical, IO80211Family's AWDL, interface, buffer and registration code
-// instruction-identical, all virtual table slots and all kernel imports matching).
+// instruction-identical, all virtual table slots and all kernel imports matching). 25G229 carries 25G241's
+// kernel and IO80211Family; 25G330 is binary-identical to 25G332. 25G422 (26.7.4 beta, from 0.7.0-alpha.3) from a
+// user's tools/check-my-mac.pl report: its IO80211Family code differs from 26.7.1's, but the six IO80211 tables'
+// sizes and names, the AWDL layouts it checks and every import of the kext the user ran match.
 // Sequoia: 24H23 (15.8) and 24H241 (15.8.3) offline, from their Kernel Debug Kits (identical
-// IO80211Family virtual tables; the AWDL subclass audited against them). Other 15.8.x kernels
-// (xnu-11417.140.69.71x) are allowed as "expected": the runtime vtable check still has to pass.
-// Sonoma: 23J631 (14.8.9) offline, from its Kernel Debug Kit. No other build yet.
+// IO80211Family virtual tables; the AWDL subclass audited against them). 24H32 is binary-identical to 24H23,
+// and 24H230 and 24H232 carry 24H241's kernel and IO80211Family. The 15.7.x builds 24G419, 24G517 and 24G830:
+// the same six IO80211 tables and AWDL, interface and buffer code as 24H23 (they differ in NAN code only),
+// IOSkywalkFamily's tables identical, all imports present. Other 15.8.x kernels (xnu-11417.140.69.71x) are
+// allowed as "expected": the runtime vtable check still has to pass.
+// Sonoma: 23J631 (14.8.9) offline, from its Kernel Debug Kit; 23J220 (14.8.3) and 23J319 (14.8.4) the same
+// way (identical tables and AWDL code; IONetworkingFamily identical). 23J520 (14.8.7), 23J620 (14.8.8) and 24G824
+// (15.7.8) from their installers' kernel collections (tools/check-my-mac.pl --kc): the protocol table, the six
+// IO80211 tables' sizes and names, the AWDL layouts it checks and every import match.
 #include <stddef.h>
 #include <string.h>
 
@@ -26,22 +35,36 @@ struct VerifiedBuild {
 #if defined(__MAC_14_4) && __IO80211_TARGET == __MAC_14_4
 #define ITL_AWDL_GUARD_SONOMA 1
 constexpr VerifiedBuild kVerifiedBuilds[] = {
+    {"23J220", "xnu-10063.141.1.708.2~1/RELEASE_X86_64"},    // macOS 14.8.3
+    {"23J319", "xnu-10063.141.1.710.3~1/RELEASE_X86_64"},    // macOS 14.8.4
+    {"23J520", "xnu-10063.141.1.712.16~1/RELEASE_X86_64"},   // macOS 14.8.7 (installer's KC)
+    {"23J620", "xnu-10063.141.1.713.39~1/RELEASE_X86_64"},   // macOS 14.8.8 (installer's KC; 14.8.9's kernel)
     {"23J631", "xnu-10063.141.1.713.39~1/RELEASE_X86_64"},   // macOS 14.8.9
 };
 #elif defined(__MAC_15_2) && __IO80211_TARGET == __MAC_15_2
 #define ITL_AWDL_GUARD_SEQUOIA 1
 constexpr VerifiedBuild kVerifiedBuilds[] = {
+    {"24G419", "xnu-11417.140.69.705.2~1/RELEASE_X86_64"},    // macOS 15.7.3
+    {"24G517", "xnu-11417.140.69.708.3~1/RELEASE_X86_64"},    // macOS 15.7.4
+    {"24G824", "xnu-11417.140.69.711.44~1/RELEASE_X86_64"},   // macOS 15.7.8 (installer's KC; 15.7.9's kernel)
+    {"24G830", "xnu-11417.140.69.711.44~1/RELEASE_X86_64"},   // macOS 15.7.9
     {"24H23",  "xnu-11417.140.69.712.69~1/RELEASE_X86_64"},   // macOS 15.8
+    {"24H32",  "xnu-11417.140.69.712.69~1/RELEASE_X86_64"},   // macOS 15.8.1
+    {"24H230", "xnu-11417.140.69.713.47~2/RELEASE_X86_64"},   // macOS 15.8.2
+    {"24H232", "xnu-11417.140.69.713.47~2/RELEASE_X86_64"},   // macOS 15.8.2
     {"24H241", "xnu-11417.140.69.713.47~2/RELEASE_X86_64"},   // macOS 15.8.3
 };
-// 15.8.1 (24H32), 15.8.2 (24H232) and later 15.8.x updates: same kernel train, not checked offline.
+// Later 15.8.x updates: same kernel train, not checked offline.
 constexpr const char *kExpectedKernelPrefix = "xnu-11417.140.69.71";
 constexpr const char *kExpectedKernelSuffix = "/RELEASE_X86_64";
 #else
 constexpr VerifiedBuild kVerifiedBuilds[] = {
+    {"25G229", "xnu-12377.161.15.700.19~2/RELEASE_X86_64"},   // macOS 26.7
     {"25G241", "xnu-12377.161.15.700.19~2/RELEASE_X86_64"},   // macOS 26.7.1
+    {"25G330", "xnu-12377.161.15.701.48~2/RELEASE_X86_64"},   // macOS 26.7.2
     {"25G332", "xnu-12377.161.15.701.48~2/RELEASE_X86_64"},   // macOS 26.7.2
     {"25G342", "xnu-12377.161.15.701.48~2/RELEASE_X86_64"},   // macOS 26.7.3
+    {"25G422", "xnu-12377.161.15.702.20~1/RELEASE_X86_64"},   // macOS 26.7.4 beta (check-my-mac report)
 };
 #endif
 

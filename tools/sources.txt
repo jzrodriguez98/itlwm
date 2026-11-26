@@ -73,3 +73,6 @@ itlwm/hal_iwm/scan.cpp
 ForbiddenItlwm/IOPCIEDeviceWrapper.cpp
 itlwm/hal_iwm/ItlIwm.cpp
 ForbiddenItlwm/AWDLBuildGuard.cpp
+itl80211/openbsd/crypto/i31.c
+itl80211/openbsd/crypto/ec_p256_m31.c
+itl80211/openbsd/net80211/ieee80211_sae.c

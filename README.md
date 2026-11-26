@@ -6,7 +6,9 @@
 
 **AirDrop for Intel Wi-Fi cards on macOS.** ForbiddenItlwm is a fork of AirportItlwm that adds AWDL, the peer-to-peer Wi-Fi link AirDrop runs on. Apple's own Wi-Fi stack does the rest. Normal Wi-Fi stays connected while AirDrop works.
 
-> **Public beta. Newest release: [0.6.0-beta.4](https://github.com/retropineaple/ForbiddenItlwm/releases/tag/v0.6.0-beta.4).** Works on macOS Tahoe 26.7.x and Sequoia 15.8.x, with a Sonoma 14.8.9 test build. Each macOS version has its own kexts. Fixes come out often: before reporting a problem, update to the newest release (**Watch → Custom → Releases** to be notified).
+> **New alpha: [0.7.0-alpha.4](https://github.com/retropineaple/ForbiddenItlwm/releases/tag/v0.7.0-alpha.4).** The last alpha of 0.7.0: faster Mac → iPhone transfers by default, hidden networks and 802.1X fixes (PR #107), a fix for one-antenna cards (#97) and for `bluetoothd` being killed after long uptimes (BTLEAdvFixup 0.9.8, #62). Experimental: a second 5 GHz AirDrop channel with `itlawdlsched=1` (#45) and packed frames when the Mac sends (`-itlawdlamsdutx`). AirDrop still needs only `-btleadv` in `boot-args`; the experimental parts stay off unless you add their [boot flags](docs/BOOT-FLAGS.md#experimental). See the [CHANGELOG](CHANGELOG.md).
+
+> **Public beta: [0.6.0-beta.4](https://github.com/retropineaple/ForbiddenItlwm/releases/tag/v0.6.0-beta.4).** Works on macOS Tahoe 26.7.x and Sequoia 15.8.x, with a Sonoma 14.8.9 test build. Each macOS version has its own kexts. Fixes come out often: before reporting a problem, update to the newest release (**Watch → Custom → Releases** to be notified).
 
 ## ⚠️ Read this first
 
@@ -18,7 +20,7 @@
 
 - Test from a USB stick with a copy of your EFI, never your only working one.
 - Run the [compatibility checker](#will-it-work-on-my-hackintosh) first.
-- **Before you update macOS, boot once without `-btleadv`.** Otherwise an incremental update can fail.
+- **Before you update macOS, boot once without `-btleadv` and `-btleadvnodupfilter`.** Otherwise an incremental update can fail.
 
 ## What works
 
@@ -26,8 +28,8 @@ On the project's test machine (AX211, macOS 26.7.1, iPhone 11), with normal 5 GH
 
 | | Result |
 | --- | --- |
-| Mac → iPhone | Works. About 22 MB/s, connects in 1 to 4 s |
-| iPhone → Mac | Works. About 20 MB/s, a cold connect usually takes 3 to 10 s |
+| Mac → iPhone | Works, connects in 1 to 4 s. About 22 MB/s up to 0.7.0-alpha.3; with 0.7.0-alpha.4, 25 to 27 MB/s on average and up to 33 MB/s (105 MB files, iPhone on 149) |
+| iPhone → Mac | Works. About 20 MB/s. A cold connect takes 3 to 10 s up to 0.6.0-beta.4; with 0.7.0-alpha.1's experimental flags it takes about 1 to 2 s |
 | Handoff, Universal Clipboard | Work |
 | iMessage and push over Wi-Fi | Work |
 
@@ -39,13 +41,13 @@ Users also report **AirPlay** working over this driver, from an iPad to the hack
 
 | macOS | Builds | AirDrop |
 | --- | --- | --- |
-| Tahoe | 26.7.1, 26.7.2, 26.7.3 | Works (tested on 26.7.1, users on 26.7.2 and 26.7.3) |
-| Sequoia | 15.8, 15.8.1, 15.8.2, 15.8.3 | Works from 0.5.1-test1 (users on 15.8.1 to 15.8.3) |
-| Sonoma | 14.8.9 | Test build. From 0.6.0-beta.3 macOS creates `awdl0`, and one user reports AirDrop working both ways on an AX200 at 5–7 MB/s ([PR #77](https://github.com/retropineaple/ForbiddenItlwm/pull/77), [#55](https://github.com/retropineaple/ForbiddenItlwm/issues/55)). Not tested here |
+| Tahoe | 26.7.1, 26.7.2, 26.7.3; 26.7 from 0.7.0-alpha.2; 26.7.4 beta (25G422) from 0.7.0-alpha.3 | Works (tested on 26.7.1, users on 26.7.2 and 26.7.3). 0.7.0-alpha.2 adds 26.7 (25G229, the same Wi-Fi stack and kernel as 26.7.1) and 26.7.2's other build (25G330), checked offline. 0.7.0-alpha.3 adds the 26.7.4 beta 25G422 from a user's check-my-mac report; the final 26.7.4 may be another build |
+| Sequoia | 15.8, 15.8.1, 15.8.2, 15.8.3; 15.7.3, 15.7.4, 15.7.8, 15.7.9 from 0.7.0-alpha.2 | Works from 0.5.1-test1 (users on 15.8.1 to 15.8.3). Up to 0.7.0-alpha.1, 15.8.1 and 15.8.2 weren't on the list, so the announcement copy stays off there (from 0.6.0-beta.1) and other devices may not list the Mac. 0.7.0-alpha.2 adds them, checked offline (15.8.1 runs 15.8's Wi-Fi stack, 15.8.2 15.8.3's), and 15.7.3, 15.7.4, 15.7.8 and 15.7.9 (the same AirDrop code as 15.8, and new BTLEAdvFixup patterns for 15.7.3, 15.7.8 and 15.7.9) |
+| Sonoma | 14.8.9; 14.8.3, 14.8.4, 14.8.7, 14.8.8 from 0.7.0-alpha.2 | Test build. From 0.6.0-beta.3 macOS creates `awdl0`, and one user reports AirDrop working both ways on an AX200 at 5–7 MB/s ([PR #77](https://github.com/retropineaple/ForbiddenItlwm/pull/77), [#55](https://github.com/retropineaple/ForbiddenItlwm/issues/55)). Not tested here. 0.7.0-alpha.2 adds 14.8.3, 14.8.4, 14.8.7 and 14.8.8, checked offline, with new BTLEAdvFixup patterns for 14.8.7 |
 
-On any other build the driver keeps AirDrop off and works as plain Wi-Fi. [docs/TESTED-HARDWARE.md](docs/TESTED-HARDWARE.md) has every build and report.
+On another build of a supported macOS version the driver keeps AirDrop off and works as plain Wi-Fi, apart from "expected" Sequoia 15.8.x kernels (AirDrop starts without the announcement copy) and with `-itlawdlanybuild`. On another macOS version the kext doesn't start: use the build for your version. BTLEAdvFixup's Bluetooth patterns for 15.7.4, 14.8.3 and 14.8.4 haven't been checked yet (no bluetoothd from those builds). [docs/TESTED-HARDWARE.md](docs/TESTED-HARDWARE.md) has every build and report.
 
-**Cards:** Intel Wi-Fi 6 and 6E cards. The project tests the AX211; users report the AX201, AX210, AX200 and an AX1690i working. Older 7000, 8000 and 9000-series cards (such as the 9260, and the 9560 on 8th and 9th-gen Intel boards) run on a part of the driver without AirDrop code, so they get normal Wi-Fi only. The 9560, 9461 and 9462 on 10th-gen (Ice Lake, Comet Lake) and newer boards run on the newer part, which has the AirDrop code; one is being tested ([#87](https://github.com/retropineaple/ForbiddenItlwm/issues/87)). `check_compat.sh` tells which part your card uses.
+**Cards:** Intel Wi-Fi 6 and 6E cards. The project tests the AX211; users report the AX201, AX210, AX200 and an AX1690i working. Older 7000, 8000 and 9000-series cards (such as the 7265, the 9260, and the 9560 on 8th and 9th-gen Intel boards) run on a part of the driver without AirDrop code, so they get normal Wi-Fi only ([#37](https://github.com/retropineaple/ForbiddenItlwm/issues/37)). The 9560, 9461 and 9462 on 10th-gen (Ice Lake, Comet Lake) and newer boards run on the newer part, which has the AirDrop code; one is being tested ([#87](https://github.com/retropineaple/ForbiddenItlwm/issues/87)). On one AX101 the firmware kept restarting with AirDrop on ([#97](https://github.com/retropineaple/ForbiddenItlwm/issues/97)); 0.7.0-alpha.4 has a candidate fix, waiting for confirmation on an AX101. `check_compat.sh` tells which part your card uses.
 
 **No OCLP Wi-Fi patches.** ForbiddenItlwm needs macOS's own Wi-Fi stack. If you used OpenCore Legacy Patcher's "Modern Wireless" root patch for an older AirportItlwm, revert it, and also remove what it added to `config.plist` (see [INSTALL](docs/INSTALL.md#before-you-start)). Left in place, they stop Wi-Fi from starting.
 
@@ -60,10 +62,14 @@ Read-only: it changes nothing and sends nothing anywhere. More in [tools/compat]
 **Channels 149 and 44, and your country.** AirDrop is fast on 5 GHz at 80 MHz. Apple devices use channel 149 or 44 for it, each by its own country rules (in Japan, Germany and Russia, for example, iPhones use 44).
 - **The card has to learn your country first,** from a nearby Wi-Fi network that advertises it (most routers do; an iPhone's Personal Hotspot switched on nearby also works). Until then it falls back to channel 6.
 - **From 0.6.0-alpha.1 the listener follows your iPhone** onto 44 when the iPhone uses 44 ([#17](https://github.com/retropineaple/ForbiddenItlwm/issues/17), [PR #21](https://github.com/retropineaple/ForbiddenItlwm/pull/21)). Up to 0.5.4 it stayed on 149 or fell back to channel 6, which works but is slow.
-- **Some countries allow neither** (Turkey, Egypt and Saudi Arabia have no 149, for example), or only at 20 or 40 MHz. AirDrop then uses channel 6.
+- **From 0.7.0-alpha.1, with `itlawdlsched=1`,** the listener uses the AirDrop channel macOS itself picks with Apple's rules, instead of guessing from what nearby devices announce, and visits channel 6 in the slot Apple devices use it. If macOS names no usable channel, it falls back to the old choice.
+- **Some countries have no channel 149** (Turkey, Egypt and Saudi Arabia, for example), and some allow 149 or 44 only at 20 or 40 MHz. Where neither is usable at 80 MHz, AirDrop uses 149 or 44 at 20 MHz if your iPhone uses that channel (with `itlawdlsched=1`, if macOS picked it), and otherwise channel 6.
+- **Your router in AirDrop's 80 MHz block on another main channel** (153–161 at 80 MHz with AirDrop on 149, or 36, 40 or 48 with 44), **or at 160 MHz over AirDrop's channel:** up to 0.7.0-alpha.1 AirDrop drops to 20 MHz there, or avoids that channel ([#26](https://github.com/retropineaple/ForbiddenItlwm/issues/26), [#101](https://github.com/retropineaple/ForbiddenItlwm/issues/101)). From 0.7.0-alpha.2, with `itlawdlsched=1`, it stays at 80 MHz there, as on a real Mac. On the project's AX211 that was tested for reception and Wi-Fi speed, the 160 MHz case with a simulated 160 MHz link; no AirDrop transfer has been tested in these layouts yet.
 - **Where the card marks a channel passive** (China's 149, Japan's 44), AirDrop uses it once it has heard a Wi-Fi network there, or from 0.6.0 while your Mac's own Wi-Fi is connected nearby in the same channel group.
 
 The checker shows your country and whether channels 149 and 44 are open; [TROUBLESHOOTING](docs/TROUBLESHOOTING.md#the-listener-is-on-channel-6-or-countrylearned-is-no) explains the rest.
+
+**Your macOS build isn't supported yet?** Run `perl tools/check-my-mac.pl` and paste its output in [discussion #98](https://github.com/retropineaple/ForbiddenItlwm/discussions/98). It reads the Apple code the kexts rely on, on your Mac, and reports what's needed to add support for your build, so you don't have to send in system files. It sends nothing itself. More in [CHECK-MY-MAC](docs/CHECK-MY-MAC.md).
 
 ## Install
 
@@ -87,16 +93,16 @@ Please report what you find, working or not, in a [GitHub issue](https://github.
 ## Known limitations
 
 - **Mac → iPhone can still be slower than iPhone → Mac** on some setups ([#24](https://github.com/retropineaple/ForbiddenItlwm/issues/24), [#63](https://github.com/retropineaple/ForbiddenItlwm/issues/63)). 0.6.0's same-channel fix ([PR #47](https://github.com/retropineaple/ForbiddenItlwm/pull/47)) solved the main case (#22).
-- **Connects can be slow,** mostly iPhone → Mac.
+- **Slow connects, mostly iPhone → Mac, and a failed first send after the iPhone was idle** (sending again works). 0.7.0-alpha.1's experimental flags (`itlawdlsched=1 -btleadvnodupfilter`, see [BOOT-FLAGS](docs/BOOT-FLAGS.md#experimental)) address the causes found on the project's hackintosh (AX211): connects take about 1 to 2 s, the first send no longer fails, even after the iPhone sat idle for a long time, and Mac → iPhone no longer sits on "Waiting". Reports from other machines are needed. In 0.7.0-alpha.1 the scheduler runs on AX210-family cards only; 0.7.0-alpha.2 adds the AX200 family.
 - **Normal Wi-Fi loses some speed while AirDrop's listener runs** (they share the radio).
-- **A long list of boot flags,** sleep untested on the project's hackintosh (one user reports four of five nights fine; 0.6.0-beta.4 fixes the failed wake they caught, [#38](https://github.com/retropineaple/ForbiddenItlwm/issues/38)), tested with iPhones (users report iPads working, and AirDrop with a Mac as the other device, [#33](https://github.com/retropineaple/ForbiddenItlwm/issues/33), [#81](https://github.com/retropineaple/ForbiddenItlwm/issues/81)).
+- **Boot flags:** up to 0.7.0-alpha.1 a long list; from 0.7.0-alpha.2 only `-btleadv` (the rest are defaults). Sleep untested on the project's hackintosh (one user reports four of five nights fine; 0.6.0-beta.4 fixes the failed wake they caught, [#38](https://github.com/retropineaple/ForbiddenItlwm/issues/38)), tested with iPhones (users report iPads working, and AirDrop with a Mac as the other device, [#33](https://github.com/retropineaple/ForbiddenItlwm/issues/33), [#81](https://github.com/retropineaple/ForbiddenItlwm/issues/81)).
 - **Not working yet:**
   - **Instant Hotspot,** joining the iPhone's hotspot from the Wi-Fi menu: its Bluetooth connection to the iPhone times out ([#39](https://github.com/retropineaple/ForbiddenItlwm/issues/39), [#40](https://github.com/retropineaple/ForbiddenItlwm/issues/40)). Join the hotspot as a normal network, with its password, instead.
   - **Sidecar and Universal Control over Wi-Fi:** the driver doesn't support the traffic registration they need ([#42](https://github.com/retropineaple/ForbiddenItlwm/issues/42)). Sidecar over USB works.
   - **Internet Sharing over Wi-Fi:** the card can't act as an access point ([#28](https://github.com/retropineaple/ForbiddenItlwm/issues/28)). Sharing over Bluetooth or USB works.
-- **One Apple device at a time for fast transfers.** The driver keeps block ack with one device, as long as that device has exchanged data in the last ten minutes. A second Apple device nearby (another Mac, an iPad) can then keep an iPhone waiting ([#81](https://github.com/retropineaple/ForbiddenItlwm/issues/81)). See TROUBLESHOOTING.
+- **One Apple device at a time for fast transfers.** The driver keeps block ack with one device, as long as that device has exchanged data in the last ten minutes. A second Apple device nearby (another Mac, an iPad) can then keep an iPhone waiting ([#81](https://github.com/retropineaple/ForbiddenItlwm/issues/81)). From 0.7.0-alpha.2 the opt-in `-itlawdlpeerhandoff` hands it over once that device is idle, and the experimental `-itlawdlmultipeer` keeps block ack with each device instead, as a real Mac does (untested here with more than one Apple device; on one tester's setup Block Ack to the second device sometimes never starts, [#103](https://github.com/retropineaple/ForbiddenItlwm/issues/103)). See TROUBLESHOOTING.
 - **AirDrop needs the Mac to be connected to a Wi-Fi network.** The AirDrop listener runs beside your Wi-Fi connection: with Wi-Fi on but no network joined, transfers stay on "Waiting". A real Mac doesn't need a network for this.
-- **WPA3:** on a WPA2/WPA3 transition network the Mac joins with WPA2 and without protected management frames, as AirportItlwm does. WPA3-only networks can't be joined.
+- **WPA3:** opt-in with `-itlwmwpa3` (SAE/H2E, PMF), in the Tahoe and Sequoia builds. Without it, and in the Sonoma build, WPA3-only networks are refused.
 - **The Sonoma kext's Wi-Fi code** takes paths of its own (join, scan, keys, teardown) that the Tahoe and Sequoia kexts don't use. They had their first security review for 0.6.0; one user runs it on 14.8.9 (#77), and it hasn't been tested here.
 
 What's planned: [ROADMAP](docs/ROADMAP.md).
@@ -106,13 +112,15 @@ What's planned: [ROADMAP](docs/ROADMAP.md).
 | Document | What's in it |
 | --- | --- |
 | [INSTALL](docs/INSTALL.md) | Building, OpenCore setup, first boot, uninstalling |
-| [BOOT-FLAGS](docs/BOOT-FLAGS.md) | The flags the beta needs |
+| [BOOT-FLAGS](docs/BOOT-FLAGS.md) | The flags the beta needs, and the experimental ones |
 | [TROUBLESHOOTING](docs/TROUBLESHOOTING.md) | When the iPhone can't see the Mac, it's slow, or Wi-Fi breaks |
 | [TESTED-HARDWARE](docs/TESTED-HARDWARE.md) | Every tested and reported machine, card and macOS build |
 | [ROADMAP](docs/ROADMAP.md) | What's being worked on and what's planned |
 | [HOW-IT-WORKS](docs/HOW-IT-WORKS.md) | How the driver gives macOS an AWDL radio |
+| [CHECK-MY-MAC](docs/CHECK-MY-MAC.md) | Sending in data so an unsupported macOS build can be added |
 | [tools/compat](tools/compat/README.md) | Compatibility checker, transfer measurement, hardware reports |
 | [CHANGELOG](CHANGELOG.md) | Releases |
+| [CONTRIBUTING](CONTRIBUTING.md) | How to make a pull request that can be reviewed and merged |
 
 ## Credits
 

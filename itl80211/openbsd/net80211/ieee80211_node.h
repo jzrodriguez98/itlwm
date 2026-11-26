@@ -197,6 +197,48 @@ enum ieee80211_node_psstate {
 	IEEE80211_PS_DOZE
 };
 
+/*
+ * SAE finite state machine (802.11-2020 12.4.8).  Each bit records an
+ * event of the commit/confirm exchange; the combined values below are the
+ * named states the auth frame handlers test.
+ */
+#define SAE_STATE_NOTHING		0x00
+#define SAE_EVENT_COMMIT_SENT		0x01
+#define SAE_EVENT_PEER_COMMIT_RECEIVED	0x02
+#define SAE_EVENT_CONFIRM_SENT		0x04
+#define SAE_EVENT_PEER_CONFIRM_RECEIVED	0x08
+#define SAE_STATE_COMMITTED	SAE_EVENT_COMMIT_SENT
+#define SAE_STATE_CONFIRMED	(SAE_EVENT_COMMIT_SENT | SAE_EVENT_CONFIRM_SENT | \
+	SAE_EVENT_PEER_COMMIT_RECEIVED)
+#define SAE_STATE_ACCEPTED	(SAE_EVENT_COMMIT_SENT | SAE_EVENT_CONFIRM_SENT | \
+	SAE_EVENT_PEER_COMMIT_RECEIVED | SAE_EVENT_PEER_CONFIRM_RECEIVED)
+
+struct ieee80211_sae {
+	uint8_t sae_scalar[IEEE80211_SAE_MAX_ECC_PRIME_LEN];
+	uint8_t sae_element_x[IEEE80211_SAE_MAX_ECC_PRIME_LEN];
+	uint8_t sae_element_y[IEEE80211_SAE_MAX_ECC_PRIME_LEN];
+	uint8_t sae_rand[IEEE80211_SAE_MAX_ECC_PRIME_LEN];
+	uint8_t sae_peer_scalar[IEEE80211_SAE_MAX_ECC_PRIME_LEN];
+	uint8_t sae_peer_element_x[IEEE80211_SAE_MAX_ECC_PRIME_LEN];
+	uint8_t sae_peer_element_y[IEEE80211_SAE_MAX_ECC_PRIME_LEN];
+	uint8_t sae_kck[IEEE80211_SAE_MAX_ECC_PRIME_LEN];
+	uint8_t sae_pmk[IEEE80211_PMK_LEN];
+	uint8_t sae_pmkid[IEEE80211_PMKID_LEN];
+	uint8_t sae_token[IEEE80211_SAE_TOKEN_MAX_LEN];
+	size_t sae_token_len;
+	int sae_state;
+	int sae_h2e;		/* PWE derived with hash-to-element */
+	/*
+	 * Transmitter address the commit elements were derived for.  The
+	 * element is a function of both MAC addresses, so it stops being
+	 * ours as soon as the private address rotates.
+	 */
+	uint8_t sae_ownaddr[IEEE80211_ADDR_LEN];
+	uint16_t sae_send_confirm;
+	uint16_t sae_peer_send_confirm;
+	struct ieee80211_sae_auth sae_auth;
+};
+
 #define	IEEE80211_PS_MAX_QUEUE	50	/* maximum saved packets */
 
 /* Authenticator state machine: 4-Way Handshake (see 8.5.6.1.1) */
@@ -369,6 +411,9 @@ struct ieee80211_node {
 	enum ieee80211_cipher	ni_rsngroupcipher;
 	enum ieee80211_cipher	ni_rsngroupmgmtcipher;
 	u_int16_t		ni_rsncaps;
+	u_int8_t		ni_rsnxecaps;
+	u_int8_t		ni_rsnxe[18];
+	u_int8_t		ni_rsnxe_len;
 	enum ieee80211_cipher	ni_rsncipher;
 	u_int8_t		ni_nonce[EAPOL_KEY_NONCE_LEN];
 	u_int8_t		ni_pmk[IEEE80211_PMK_LEN];
@@ -382,6 +427,7 @@ struct ieee80211_node {
     uint32_t        ni_rsnie_tlv_len;
 	struct ieee80211_key	ni_pairwise_key;
 	struct ieee80211_ptk	ni_ptk;
+	struct ieee80211_sae	ni_sae;
 	u_int8_t		ni_key_count;
 	int			ni_port_valid;
 
@@ -708,6 +754,8 @@ int ieee80211_match_bss(struct ieee80211com *, struct ieee80211_node *, int);
 struct ieee80211_node *ieee80211_node_choose_bss(struct ieee80211com *, int,
 		struct ieee80211_node **);
 void ieee80211_node_join_bss(struct ieee80211com *, struct ieee80211_node *, int force_reauth = 0);
+int ieee80211_node_allow_wpa3(struct ieee80211com *,
+		const struct ieee80211_node *);
 void ieee80211_create_ibss(struct ieee80211com* ,
 		struct ieee80211_channel *);
 void ieee80211_notify_dtim(struct ieee80211com *);

@@ -141,7 +141,7 @@
 #include <HAL/ItlDriverInfo.hpp>
 #include <HAL/ItlDriverController.hpp>
 
-namespace ItlAWDL { struct MccSample; }
+namespace ItlAWDL { struct MccSample; struct PeerSlot; }
 
 class ItlIwx : public ItlHalService, ItlDriverInfo, ItlDriverController {
     OSDeclareDefaultStructors(ItlIwx)
@@ -278,7 +278,7 @@ public:
     int    iwx_nic_init(struct iwx_softc *);
     int    iwx_enable_txq(struct iwx_softc *, int, int, int, int);
     int     iwx_tvqm_alloc_txq(struct iwx_softc *, int, int);
-    struct CoexBaQueueOwner { int generation; uint32_t listener, peer; };
+    struct CoexBaQueueOwner { int generation; uint32_t listener, peer; uint8_t slot; };
     int     iwx_tvqm_enable_txq(struct iwx_softc *, int, int, uint32_t, int = IWX_STATION_ID,
                                const CoexBaQueueOwner * = nullptr);
     void    iwx_post_alive(struct iwx_softc *);
@@ -462,16 +462,41 @@ public:
     int    awdlCoexListener(struct iwx_softc *, bool add);
     int    awdlCoexMacSend(struct iwx_softc *, uint32_t action);
     int    awdlCoexTxSetup(struct iwx_softc *);
+    int    awdlCh6TxSetup(struct iwx_softc *);
+    void   awdlCh6TxTeardown(struct iwx_softc *);
+    void   awdlCh6TxSend(struct iwx_softc *, uint64_t);
     int    awdlCoexTxTeardown(struct iwx_softc *);
     void   awdlCoexTxSend(struct iwx_softc *);
     void   awdlCoexCountryAnswer(struct iwx_softc *);
     void   awdlCoexRetarget(struct iwx_softc *);
+    void   awdlSchedSpTick(struct iwx_softc *);
+    int    awdlSchedSpSend(struct iwx_softc *, uint32_t durationTU);
+    int    awdlSchedSpCancel(struct iwx_softc *);
+    void   awdlSchedFollowPlan(struct iwx_softc *, uint64_t nowUS);
+    bool   awdlSchedSecondRetune(struct iwx_softc *, unsigned channel);
+    int    awdlSchedHandleMac(struct iwx_softc *, uint32_t action);
+    bool   awdlSchedHandleEnsure(struct iwx_softc *);
+    bool   awdlSchedCh6Ensure(struct iwx_softc *);
+    void   awdlSchedCh6Remove(struct iwx_softc *);
+    static void    awdlSchedFollowTimeout(void *);
+    static void    awdlSchedFollowTask(void *);
     void   awdlCoexDataPump(struct iwx_softc *, unsigned budget = ~0U);
+    void   awdlAirtimeSample(struct iwx_softc *);
     void   awdlCoexBaHandle(struct iwx_softc *);
-    int    awdlCoexBaRemovePeer(struct iwx_softc *);
-    int    awdlCoexBaAddPeer(struct iwx_softc *, const uint8_t *);
+    int    awdlCoexBaRemovePeer(struct iwx_softc *, ItlAWDL::PeerSlot &);
+    int    awdlCoexBaRemoveAllPeers(struct iwx_softc *);
+    int    awdlCoexBaAddPeer(struct iwx_softc *, ItlAWDL::PeerSlot &, const uint8_t *);
+    bool   awdlCoexBaRxPeer(struct iwx_softc *, ItlAWDL::PeerSlot &, int, uint32_t, uint64_t);
+    bool   awdlCoexBaTxPeer(struct iwx_softc *, ItlAWDL::PeerSlot &, int, uint32_t, uint64_t);
+    bool   awdlCoexPeerSendAgg(struct iwx_softc *, ItlAWDL::PeerSlot &, mbuf_t);
+    int    awdlCoexAmsduTry(struct iwx_softc *, ItlAWDL::PeerSlot &, mbuf_t);
+    bool   awdlCoexPeerSendSingle(struct iwx_softc *, mbuf_t);
+    void   awdlCoexPeerHoldDrain(struct iwx_softc *, unsigned &);
+    void   awdlCoexStationTest(struct iwx_softc *);
     void   awdlCoexBaPauseStep(struct iwx_softc *);
-    bool   awdlCoexSendMgmt(struct iwx_softc *, const uint8_t *, size_t, uint8_t kind);
+    void   awdlCoexPeerPauseStep(struct iwx_softc *, ItlAWDL::PeerSlot &);
+    bool   awdlCoexSendMgmt(struct iwx_softc *, const uint8_t *, size_t, uint8_t kind, bool visit = false);
+    void   awdlSchedSecondMgmtStep(struct iwx_softc *);
     int    iwx_auth(struct iwx_softc *);
     int    iwx_deauth(struct iwx_softc *);
     int    iwx_run(struct iwx_softc *);

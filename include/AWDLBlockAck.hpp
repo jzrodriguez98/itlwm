@@ -13,6 +13,7 @@ struct AddbaRequest {
     uint8_t peer[6], bssid[6];
     uint8_t token, tid;
     bool immediate;
+    bool amsdu;   // the peer may send A-MSDUs inside this session's A-MPDUs (parameter bit 0)
     uint16_t window, ssn;
 };
 
@@ -20,6 +21,8 @@ struct AddbaRequest {
 // requests for other TIDs, including those waiting for a DELBA to finish.
 struct PendingAddbaRequests {
     bool empty() const { return !pending; }
+    // The peer the waiting requests are from (they are all from one), or null.
+    const uint8_t *peer() const { return pending ? requests[__builtin_ctz(pending)].peer : nullptr; }
     bool has(unsigned tid) const { return tid < 8 && (pending & (1U << tid)); }
     void clear() { pending = 0; }
     void discard(unsigned tid) {
@@ -67,6 +70,7 @@ inline bool parseAddbaRequest(const uint8_t *f, size_t length, const uint8_t *ow
     out->token = f[26];
     out->tid = uint8_t(tid);
     out->immediate = params & 2U;
+    out->amsdu = params & 1U;
     const uint16_t asked = params >> 6;
     out->window = !asked || asked > kBaWindowMax ? kBaWindowMax : asked;
     out->ssn = sequenceControl >> 4;
@@ -78,8 +82,11 @@ inline bool isAddbaFrame(const uint8_t *f, size_t length) {
     return f && length == kAddbaResponseLength && f[0] == 0xd0 && f[24] == 3 && (f[25] == 0 || f[25] == 1);
 }
 // Asks `peer` for a session to send to it: immediate, no A-MSDU, no timeout. The same length as an answer.
+// `offerAmsdu` (-itlawdlamsdutx): parameter bit 0, we may send A-MSDUs inside this session's A-MPDUs; the peer's answer
+// says whether it accepts them (AddbaAnswer::amsdu). Off, the frame is byte-for-byte as before.
 inline size_t buildAddbaRequest(uint8_t *out, size_t capacity, const uint8_t *peer, const uint8_t *own, const uint8_t *bssid,
-                                uint8_t token, uint8_t tid, uint16_t window, uint16_t startSequence, uint16_t sequence) {
+                                uint8_t token, uint8_t tid, uint16_t window, uint16_t startSequence, uint16_t sequence,
+                                bool offerAmsdu = false) {
     if (!out || !peer || !own || !bssid || capacity < kAddbaResponseLength || tid >= 8)
         return 0;
     memset(out, 0, kAddbaResponseLength);
@@ -93,7 +100,7 @@ inline size_t buildAddbaRequest(uint8_t *out, size_t capacity, const uint8_t *pe
     out[24] = 3;
     out[25] = 0;
     out[26] = token;
-    const uint16_t params = uint16_t(2U | unsigned(tid) << 2 | unsigned(window) << 6);
+    const uint16_t params = uint16_t((offerAmsdu ? 1U : 0U) | 2U | unsigned(tid) << 2 | unsigned(window) << 6);
     out[27] = uint8_t(params);
     out[28] = uint8_t(params >> 8);
     // Bytes 29 and 30 are timeout 0.
@@ -106,6 +113,7 @@ struct AddbaAnswer {
     uint8_t token, tid;
     uint16_t status, window;
     bool immediate; // Block Ack policy bit: immediate (the only kind supported) when set.
+    bool amsdu;     // parameter bit 0: the peer accepts A-MSDUs inside A-MPDUs from us (only meaningful if we offered)
 };
 // The peer's answer to our request: category 3, action 1, to `own`.
 inline bool parseAddbaAnswer(const uint8_t *f, size_t length, const uint8_t *own, AddbaAnswer *out) {
@@ -117,6 +125,7 @@ inline bool parseAddbaAnswer(const uint8_t *f, size_t length, const uint8_t *own
     out->tid = uint8_t((params >> 2) & 15U);
     out->window = params >> 6;
     out->immediate = params & 2U;
+    out->amsdu = params & 1U;
     return true;
 }
 // A peer ending a session: category 3, action 2. `peerWasSender` says which direction: true is its
@@ -185,8 +194,13 @@ inline bool isDelbaFrame(const uint8_t *f, size_t length) {
     return f && length == kDelbaLength && f[0] == 0xd0 && f[24] == 3 && f[25] == 2;
 }
 
-// Accepts with no A-MSDU and no timeout. Returns the length written, or 0 if it doesn't fit.
-inline size_t buildAddbaResponse(uint8_t *out, size_t capacity, const AddbaRequest &request, const uint8_t *own, uint16_t sequence) {
+// Accepts with no timeout, or refuses with `status` (37: request declined, for example when the firmware has no room
+// for another session). A-MSDU is allowed only if the peer asked for it and `allowAmsdu` (-itlawdlamsdurx): the
+// firmware splits received A-MSDUs into their MSDUs, as on the station's path. Returns the length written, or 0 if
+// it doesn't fit.
+constexpr uint16_t kAddbaDeclined = 37;
+inline size_t buildAddbaResponse(uint8_t *out, size_t capacity, const AddbaRequest &request, const uint8_t *own, uint16_t sequence,
+                                 uint16_t status = 0, bool allowAmsdu = false) {
     if (!out || !own || capacity < kAddbaResponseLength)
         return 0;
     memset(out, 0, kAddbaResponseLength);
@@ -200,8 +214,10 @@ inline size_t buildAddbaResponse(uint8_t *out, size_t capacity, const AddbaReque
     out[24] = 3;
     out[25] = 1;
     out[26] = request.token;
-    // Bytes 27 and 28 are status 0, success.
-    const uint16_t params = uint16_t(2U | unsigned(request.tid) << 2 | unsigned(request.window) << 6);
+    out[27] = uint8_t(status);
+    out[28] = uint8_t(status >> 8);
+    const uint16_t params = uint16_t((!status && allowAmsdu && request.amsdu ? 1U : 0U) | 2U |
+                                     unsigned(request.tid) << 2 | unsigned(request.window) << 6);
     out[29] = uint8_t(params);
     out[30] = uint8_t(params >> 8);
     // Bytes 31 and 32 are timeout 0, none.

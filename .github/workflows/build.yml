@@ -4,8 +4,8 @@ on:
   workflow_dispatch:
 
 env:
-# Same MacKernelSDK commit laobamac pins.
-MACKERNELSDK_REF: 3f750085caa17ec3a7880f11c11bf4f48cd6a164
+  # Same MacKernelSDK commit laobamac pins.
+  MACKERNELSDK_REF: 3f750085caa17ec3a7880f11c11bf4f48cd6a164
     
 jobs:
   itlwm:

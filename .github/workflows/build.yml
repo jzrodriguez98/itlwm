@@ -1,0 +1,98 @@
+name: Build itlwm (HeliPort), AirportItlwm (Sequoia, Tahoe) and IntelBTPatcher (Sequoia, Tahoe)  
+
+on:
+  workflow_dispatch:
+
+env:
+  # Same MacKernelSDK commit laobamac pins.
+  MACKERNELSDK_REF: 3f750085caa17ec3a7880f11c11bf4f48cd6a164
+
+jobs:
+  itlwm:
+    name: itlwm HeliPort (${{ matrix.configuration }})
+    runs-on: macos-15-intel
+    strategy:
+      fail-fast: false
+      matrix:
+        configuration: [Debug, Release]
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install MacKernelSDK (pinned)
+        uses: actions/checkout@v6
+        with:
+          repository: acidanthera/MacKernelSDK
+          ref: ${{ env.MACKERNELSDK_REF }}
+          path: MacKernelSDK
+      - name: Build itlwm.kext
+        env:
+          CONFIGURATION: ${{ matrix.configuration }}
+        run: |
+          set -euo pipefail
+          mkdir -p logs
+          xcodebuild -project itlwm.xcodeproj -scheme itlwm \
+            -configuration "$CONFIGURATION" -jobs 3 ARCHS=x86_64 \
+            SYMROOT="$PWD/build/products" OBJROOT="$PWD/build/obj" \
+            CODE_SIGNING_ALLOWED=NO \
+            build > logs/itlwm.log 2>&1 || { tail -100 logs/itlwm.log; exit 1; }
+      - name: Package
+        env:
+          CONFIGURATION: ${{ matrix.configuration }}
+        run: |
+          mkdir -p artifacts
+          ditto -c -k --keepParent "build/products/$CONFIGURATION/itlwm.kext" "artifacts/itlwm-$CONFIGURATION.zip"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: itlwm-${{ matrix.configuration }}
+          path: artifacts/*.zip
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: build-logs-itlwm-${{ matrix.configuration }}
+          path: logs
+
+  airport:
+    name: AirportItlwm ${{ matrix.platform }} (${{ matrix.configuration }})
+    runs-on: macos-15-intel
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [Sequoia, Tahoe]
+        configuration: [Debug, Release]
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install MacKernelSDK (pinned)
+        uses: actions/checkout@v6
+        with:
+          repository: acidanthera/MacKernelSDK
+          ref: ${{ env.MACKERNELSDK_REF }}
+          path: MacKernelSDK
+      - name: Build AirportItlwm
+        env:
+          CONFIGURATION: ${{ matrix.configuration }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+          mkdir -p logs
+          xcodebuild -project itlwm.xcodeproj -scheme "AirportItlwm-$PLATFORM" \
+            -configuration "$CONFIGURATION" -jobs 3 ARCHS=x86_64 \
+            SYMROOT="$PWD/build/products" OBJROOT="$PWD/build/obj" \
+            CODE_SIGNING_ALLOWED=NO GIT_COMMIT="_$(git rev-parse --short HEAD)" \
+            build > "logs/AirportItlwm-$PLATFORM.log" 2>&1 || { tail -100 "logs/AirportItlwm-$PLATFORM.log"; exit 1; }
+      - name: Package
+        env:
+          CONFIGURATION: ${{ matrix.configuration }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          mkdir -p artifacts
+          ditto -c -k --keepParent "build/products/$CONFIGURATION/$PLATFORM/AirportItlwm.kext" "artifacts/AirportItlwm-$PLATFORM-$CONFIGURATION.zip"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: AirportItlwm-${{ matrix.platform }}-${{ matrix.configuration }}
+          path: artifacts/*.zip
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: build-logs-${{ matrix.platform }}-${{ matrix.configuration }}
+          path: logs

@@ -2,17 +2,7 @@ name: Build AirportItlwm and IntelBTPatcher
 
 on:
   workflow_dispatch:
-    inputs:
-      target:
-        description: macOS target to build
-        required: true
-        default: both
-        type: choice
-        options:
-          - both
-          - sequoia
-          - tahoe
-
+    
 permissions:
   contents: read
 

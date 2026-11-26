@@ -17,6 +17,49 @@ permissions:
   contents: read
 
 jobs:
+  itlwm:
+    name: itlwm HeliPort (${{ matrix.configuration }})
+    runs-on: macos-15-intel
+    strategy:
+      fail-fast: false
+      matrix:
+        configuration: [Debug, Release]
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install MacKernelSDK (pinned)
+        uses: actions/checkout@v6
+        with:
+          repository: acidanthera/MacKernelSDK
+          ref: ${{ env.MACKERNELSDK_REF }}
+          path: MacKernelSDK
+      - name: Build itlwm.kext
+        env:
+          CONFIGURATION: ${{ matrix.configuration }}
+        run: |
+          set -euo pipefail
+          mkdir -p logs
+          xcodebuild -project itlwm.xcodeproj -scheme itlwm \
+            -configuration "$CONFIGURATION" -jobs 3 ARCHS=x86_64 \
+            SYMROOT="$PWD/build/products" OBJROOT="$PWD/build/obj" \
+            CODE_SIGNING_ALLOWED=NO \
+            build > logs/itlwm.log 2>&1 || { tail -100 logs/itlwm.log; exit 1; }
+      - name: Package
+        env:
+          CONFIGURATION: ${{ matrix.configuration }}
+        run: |
+          mkdir -p artifacts
+          ditto -c -k --keepParent "build/products/$CONFIGURATION/itlwm.kext" "artifacts/itlwm-$CONFIGURATION.zip"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: itlwm-${{ matrix.configuration }}
+          path: artifacts/*.zip
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: build-logs-itlwm-${{ matrix.configuration }}
+          path: logs
+
   build:
     name: Build ${{ inputs.target || 'both' }}
     runs-on: macos-15

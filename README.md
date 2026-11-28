@@ -54,7 +54,7 @@ All of this goes on the EFI.
    | Sequoia | 24.0.0 | 24.99.99 |
    | Sonoma | 23.4.0 | 23.99.99 |
 
-As a reminder, when you use BluetoolFixup or IntelBTUnified kexts, You will need to set the following NVRAM variables through your bootloader for at least Intel Bluetooth to work:
+As a reminder, when you use BluetoolFixup or IntelBTUnified kexts, you will need to set the following NVRAM variables through your bootloader for at least Intel Bluetooth to work:
 
 7C436110-AB2A-4BBB-A880-FE41995C9F82:
 bluetoothExternalDongleFailed — 00

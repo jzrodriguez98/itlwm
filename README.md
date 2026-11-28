@@ -86,6 +86,19 @@ Add all of these to `boot-args`, on one line, separated by spaces:
 
 What each one does:
 
+**Experimental flags introduced with ForbiddenItlwm 0.7.0-alpha.4 related merged commits**
+
+| Flag | Effect | Try it if |
+| --- | --- | --- |
+| `itlawdlsched=1` | The scheduler: the driver follows macOS's AirDrop plan like a real Mac. **New**: it now also covers a second 5 GHz AirDrop channel (see below) | Your card is a Wi-Fi 6 or 6E card (AX210, AX211, AX411, AX200, AX201, AX101 or 9560 class) |
+| `-btleadvnodupfilter` | The Mac notices the iPhone's Bluetooth changes at once | Everyone. Remove it before a macOS update, like -btleadv |
+| `-itlawdlmultipeer` | Each nearby Apple device gets its own fast session | You have two or more Apple devices nearby |
+| `-itlawdlamsdurx` | Accepts packed frames (A-MSDU) from Apple devices sending to the Mac | You'd like to compare iPhone → Mac speed with and without it |
+| `-itlawdlamsdutx` | **New**: the Mac packs two packets into one frame when it sends to a device that agreed to it | You'd like to compare Mac → iPhone speed with and without it |
+| `-itlwmwpa3` | **New**: Joins WPA3 networks (SAE with H2E) | Your network uses WPA3 |
+
+**Original boot flags working with ForbiddenItlwm 0.6.0-beta.4 related merged commits**
+
 | Flag | Effect |
 | --- | --- |
 | `-btleadv` | Turns IntelBTPatcher on, so `bluetoothd` can start Bluetooth LE advertising on the Intel controller. `-btleadvoff` turns it off again |
@@ -106,17 +119,6 @@ What each one does:
 | `-itlawdlcoexpeerpause` | Pauses the iPhone's firmware queue while its schedule has it away, so frames aren't wasted |
 | `-itlawdlcoexbatrace` | Records Block Ack events in the I/O Registry for bug reports. Diagnostic only, cheap |
 | `itlawdltxqueue=4096` | Size of the driver's own transmit queue for `awdl0` |
-
-**Experimental flags introduced with ForbiddenItlwm 0.7.0-alpha.4 related merged commits**
-
-| Flag | Effect | Try it if |
-| --- | --- | --- |
-| `itlawdlsched=1` | The scheduler: the driver follows macOS's AirDrop plan like a real Mac. **New**: it now also covers a second 5 GHz AirDrop channel (see below) | Your card is a Wi-Fi 6 or 6E card (AX210, AX211, AX411, AX200, AX201, AX101 or 9560 class) |
-| `-btleadvnodupfilter` | The Mac notices the iPhone's Bluetooth changes at once | Everyone. Remove it before a macOS update, like -btleadv |
-| `-itlawdlmultipeer` | Each nearby Apple device gets its own fast session | You have two or more Apple devices nearby |
-| `-itlawdlamsdurx` | Accepts packed frames (A-MSDU) from Apple devices sending to the Mac | You'd like to compare iPhone → Mac speed with and without it |
-| `-itlawdlamsdutx` | **New**: the Mac packs two packets into one frame when it sends to a device that agreed to it | You'd like to compare Mac → iPhone speed with and without it |
-| `-itlwmwpa3` | **New**: Joins WPA3 networks (SAE with H2E) | Your network uses WPA3 |
 
 **Optional flags**
 

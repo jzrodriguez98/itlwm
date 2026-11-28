@@ -137,6 +137,8 @@ These restore earlier behaviour, for A/B testing only. Leave them off.
 
 For more details about boot-args enabling AirDrop support you can refer to the original fork, [ForbiddenItlwm](https://github.com/retropineaple/ForbiddenItlwm)
 
+As a reminder, when you use BluetoolFixup or IntelBTUnified kexts, 
+
 # An Intel Wi-Fi Adapter Kernel Extension for macOS, based on the OpenBSD Project
 
 ## Upstream itlwm Repository Documentation

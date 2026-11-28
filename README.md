@@ -64,6 +64,10 @@ bluetoothInternalControllerInfo — 0000000000000000000000000000
 
 It is recommended to do it through OpenCore NVRAM section.
 
+You can look at my sample config file to see how the above entries are set up
+ 
+https://github.com/jzrodriguez98/MSI-Z590-A-Pro-macOS-26/blob/main/OC/config.plist
+
 3. **Boot arguments:** add the flags listed below to `boot-args` under `NVRAM` → `Add` → `7C436110-AB2A-4BBB-A880-FE41995C9F82`. Keep your existing arguments. Because OpenCore only writes NVRAM keys listed under `Delete`, check that `boot-args` is listed there for the same GUID.
 
 4. **Validate:** `plutil -lint config.plist`, and `ocvalidate` if you have it.

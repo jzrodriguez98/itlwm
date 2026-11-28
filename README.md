@@ -54,6 +54,13 @@ All of this goes on the EFI.
    | Sequoia | 24.0.0 | 24.99.99 |
    | Sonoma | 23.4.0 | 23.99.99 |
 
+As a reminder, when you use BluetoolFixup or IntelBTUnified kexts, You will need to set the following NVRAM variables through your bootloader for at least Intel Bluetooth to work:
+
+7C436110-AB2A-4BBB-A880-FE41995C9F82:bluetoothExternalDongleFailed — 00
+7C436110-AB2A-4BBB-A880-FE41995C9F82:bluetoothInternalControllerInfo — 0000000000000000000000000000
+
+It is recommended to do it through OpenCore NVRAM section.
+
 3. **Boot arguments:** add the flags listed below to `boot-args` under `NVRAM` → `Add` → `7C436110-AB2A-4BBB-A880-FE41995C9F82`. Keep your existing arguments. Because OpenCore only writes NVRAM keys listed under `Delete`, check that `boot-args` is listed there for the same GUID.
 
 4. **Validate:** `plutil -lint config.plist`, and `ocvalidate` if you have it.
@@ -137,7 +144,6 @@ These restore earlier behaviour, for A/B testing only. Leave them off.
 
 For more details about boot-args enabling AirDrop support you can refer to the original fork, [ForbiddenItlwm](https://github.com/retropineaple/ForbiddenItlwm)
 
-As a reminder, when you use BluetoolFixup or IntelBTUnified kexts, 
 
 # An Intel Wi-Fi Adapter Kernel Extension for macOS, based on the OpenBSD Project
 

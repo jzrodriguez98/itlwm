@@ -57,6 +57,7 @@ All of this goes on the EFI.
 As a reminder, when you use BluetoolFixup or IntelBTUnified kexts, You will need to set the following NVRAM variables through your bootloader for at least Intel Bluetooth to work:
 
 7C436110-AB2A-4BBB-A880-FE41995C9F82:bluetoothExternalDongleFailed — 00
+
 7C436110-AB2A-4BBB-A880-FE41995C9F82:bluetoothInternalControllerInfo — 0000000000000000000000000000
 
 It is recommended to do it through OpenCore NVRAM section.
